@@ -1,0 +1,139 @@
+===============================================================================
+SWARM · P1 — COMPONENT DESIGN
+Functional core / imperative shell · phase 1 of 6 · extends P0
+multi-region reach
+===============================================================================
+
+P1 spreads the swarm across regions and shards the control plane per region,
+over a thin, EVENTUALLY-CONSISTENT global layer. Every new piece is what P0
+promised: a new pure CORE (a decision) plus new SHELL I/O (cross-region
+transport). No P0 boundary is disturbed.
+
+
+-------------------------------------------------------------------------------
+01 — WHAT CHANGES FROM P0
+-------------------------------------------------------------------------------
+P0 was one region. P1 makes the control plane REGIONAL — each region runs its
+own P0 control plane (planner, registry, rendezvous, mitosis) — and adds a thin
+GLOBAL ROUTING LAYER above them. Four deltas, no rewrites:
+
+  Piece            P0                 P1 delta
+  ---------------  -----------------  -------------------------------------------
+  Control plane    single             one per region; publishes a regional summary
+  Routing          —                  new global layer: route job->region; merge views
+  Placement        any local cell     may spill an independent task to a peer region
+  Agent failover   emits Failover     a decision fills it in: which region to dial next
+
+  submit -> GLOBAL ROUTING LAYER (route job->region; merge regional views)
+              |  route                          ^ summaries (eventually consistent)
+              v                                 |
+        REGION us-east                    REGION eu-west
+        {planner registry rendezvous       {planner registry rendezvous
+         mitosis} -> cells                  mitosis} -> cells
+        agents dial their own region's rendezvous; independent tasks may spill.
+
+Everything inside a region is the P0 design unchanged; routing and the merged
+global view are new; the global layer never sits on the hot path.
+
+
+-------------------------------------------------------------------------------
+02 — THE CONSISTENCY MODEL IS A PURE MERGE
+-------------------------------------------------------------------------------
+Multi-region introduces the one hazard P0 lacked: regions disagree in transit.
+The design keeps this off the hot path (a region schedules from its own store —
+brief rule A1) and confines reconciliation to one pure function, mergeGlobal,
+that is COMMUTATIVE, ASSOCIATIVE, and IDEMPOTENT. Those laws are exactly what
+makes eventual consistency converge — and they are a gift to FCIS, because they
+are algebraic properties you can property-test without a network.
+
+  summary A, summary B, A-again(dup)  -->  mergeGlobal (pure)  -->  GlobalView
+  (any order, duplicates ok)               commutative·idempotent   converges
+
+
+-------------------------------------------------------------------------------
+03 — NEW & CHANGED COMPONENTS
+-------------------------------------------------------------------------------
+
+GLOBAL ROUTING LAYER  [global · new]
+  Responsibility: route each job to a region; hold the merged, eventually-
+    consistent view of all regions.
+  Core (pure):
+    route(job JobSpec, regions []RegionView) Route  // To{id} | Spread{ids} | NoRegion
+    mergeGlobal(v GlobalView, s RegionalSummary) GlobalView  // commutative·assoc·idempotent
+    diverged(v GlobalView, now Instant) []RegionID  // stale regions (observability)
+  Shell (I/O): receive Submit at edge, forward to routed region's planner;
+    gossip/replicate RegionalSummary; apply mergeGlobal; serve aggregate view.
+  Boundary: JobSpec + []RegionView in; Route out. mergeGlobal's laws verified by
+    property tests (shuffled, duplicated summaries -> one fixed point).
+
+REGIONAL CONTROL PLANE  [region · delta from P0]
+  Responsibility: the P0 planner/registry/rendezvous/mitosis, now scoped to one
+    region and publishing a summary upward. P0 cores unchanged.
+  Core (pure):
+    // all P0 cores unchanged: admit, place, decide, apply ...
+    summarize(reg Registry) RegionalSummary  // capacity·health·cell count
+  Shell (I/O): everything the P0 control plane did, tagged with a RegionID;
+    periodically publish summarize() to the global layer.
+  Boundary: adds RegionID to identifiers; emits RegionalSummary. Proof of the
+    FCIS promise: going regional added one pure fn + one shell publish, touched
+    no existing core.
+
+CROSS-REGION PLACEMENT  [planner · delta]
+  Responsibility: for independent jobs, let a task spill to a peer region when
+    home is full. Locality preferred; only independent tasks spill (tight jobs
+    stay local in P2).
+  Core (pure):
+    placeAcross(t Task, local []CellView, peers []RegionView) Placement
+      // prefer local; Spill{RegionID} when local full and a peer has capacity; else NoCapacity
+  Shell (I/O): read local + peer snapshots (peers from global view); on Spill,
+    forward the task to the peer region's queue.
+  Boundary: task + local & peer snapshots in; Placement (possibly Spill) out.
+    Extends P0's place; locality-first ranking is a pure deterministic test.
+
+AGENT · CROSS-REGION FAILOVER  [agent · delta]
+  Responsibility: fill in the target of P0's Failover — when home won't answer,
+    decide which region to dial next. P0 registration state machine unchanged.
+  Core (pure):
+    selectRegion(known []RegionID, health map[RegionID]Health,
+                 homeFirst bool, attempt int) RegionID  // prefer home, then nearest healthy
+  Shell (I/O): keep known-region list (cached from global layer); on the P0
+    Failover command call selectRegion and dial it; carry SPIFFE identity across.
+  Boundary: known regions + health + attempt in; a RegionID out. "Home down, two
+    peers up, prefer nearest" is a one-line test; the P0 dial->enroll->join->
+    heartbeat machine is reused verbatim.
+
+
+-------------------------------------------------------------------------------
+04 — THE BARRIER SPIKE (de-risking P2)
+-------------------------------------------------------------------------------
+P1 also carries a THROWAWAY SPIKE: a standalone prototype of the future barrier
+coordinator, run against a FAKE network to prove the mechanics before P2 builds
+it for real. It ships nothing, but it's written FCIS-first, so what it proves
+transfers directly.
+
+  step(s BarrierState, ev BarrierEvent, now Instant) (BarrierState, []BarrierCmd)
+    // BarrierEvent = Done{worker,partial} | Deadline | Tick
+    // BarrierCmd   = AllReduce{partials} | Release{step} | Checkpoint | Evict{worker}
+    // release step N+1 only when every worker Done, or a Deadline evicts a straggler
+
+Why spike it now: the barrier + checkpoint + mitosis-at-checkpoint interaction is
+the riskiest piece. Proving the pure step against simulated workers (with an
+injected straggler and a mid-step loss) retires that risk in P1, so P2 is
+assembly, not discovery. The spike's core becomes the P2 core; only its fake
+shell is thrown away.
+
+
+-------------------------------------------------------------------------------
+05 — WHAT P1 STILL DEFERS
+-------------------------------------------------------------------------------
+P1 is still independent-driver, trusted, native — it added reach, not
+capability. Tight coupling + barrier/leader/message-passing drivers land in P2
+(the spike's core productionized, plus checkpointing and gang scheduling); the
+WASM open tier + quorum/reputation verification in P3; scale infrastructure in
+P4. Each remains a new pure core plus new shell I/O over the same boundary.
+
+
+===============================================================================
+Swarm · P1 component design
+multi-region · same FCIS line as P0
+===============================================================================

@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swarm P4 Components</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bg:#F1F4F3; --surface:#FFFFFF; --surface-2:#F7F9F8; --ink:#14201D; --muted:#566964;
+    --line:#DCE4E1; --line-2:#C5D1CD; --accent:#0E8F84; --accent-sf:#0e8f8416;
+    --plane:#3B5B8C; --plane-sf:#3b5b8c14; --good:#2E8256; --warn:#B26F13; --crit:#BC4130;
+    --shadow:0 1px 2px #14201d0c, 0 8px 24px -12px #14201d1f;
+  }
+  :root:not([data-theme="light"]) { @media (prefers-color-scheme: dark) {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  } }
+  :root[data-theme="dark"] {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--bg); color:var(--ink); font-family:"IBM Plex Sans",system-ui,sans-serif;
+    font-size:17px; line-height:1.62; margin:0; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1040px; margin:0 auto; padding:0 24px; }
+  .measure { max-width:720px; }
+
+  header.masthead { border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--surface-2),var(--bg)); }
+  .masthead-inner { padding:26px 24px 22px; max-width:1040px; margin:0 auto;
+    display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+  .brand { display:flex; align-items:center; gap:13px; }
+  .glyph { width:38px; height:38px; flex:none; color:var(--accent); }
+  .brand-text { display:flex; flex-direction:column; line-height:1.1; }
+  .brand-name { font-weight:700; font-size:20px; letter-spacing:-0.02em; }
+  .brand-sub { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    letter-spacing:0.02em; margin-top:3px; }
+  .masthead-meta { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    text-align:right; line-height:1.7; }
+  .masthead-meta b { color:var(--ink); font-weight:600; }
+
+  .hero { padding:56px 0 26px; }
+  .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-weight:500;
+    letter-spacing:0.16em; text-transform:uppercase; color:var(--accent);
+    display:flex; align-items:center; gap:10px; }
+  .eyebrow::before { content:""; width:26px; height:1px; background:var(--accent); display:inline-block; }
+  h1 { font-size:clamp(32px,5.4vw,48px); line-height:1.04; letter-spacing:-0.033em; font-weight:700;
+    margin:20px 0 0; text-wrap:balance; max-width:17ch; }
+  .lede { font-size:clamp(17px,2.3vw,20px); color:var(--muted); margin:22px 0 0; max-width:52ch;
+    text-wrap:pretty; }
+  .lede b { color:var(--ink); font-weight:600; }
+
+  section { padding:38px 0; border-top:1px solid var(--line); margin-top:36px; }
+  .sec-head { display:flex; gap:18px; align-items:baseline; margin-bottom:8px; }
+  .sec-num { font-family:"IBM Plex Mono",monospace; font-size:14px; font-weight:600; color:var(--accent);
+    flex:none; padding-top:4px; }
+  h2 { font-size:clamp(23px,3.4vw,31px); letter-spacing:-0.025em; font-weight:700; margin:0;
+    text-wrap:balance; line-height:1.12; }
+  h3 { font-size:19px; letter-spacing:-0.01em; font-weight:600; margin:0 0 4px; }
+  p { margin:14px 0; }
+  .sec-body { padding-left:0; }
+  @media (min-width:720px){ .sec-body { padding-left:47px; } }
+  strong { font-weight:600; }
+  code,.mono { font-family:"IBM Plex Mono",monospace; font-size:0.88em; }
+  p code,li code { background:var(--accent-sf); color:var(--ink); padding:1px 6px; border-radius:5px;
+    font-size:0.83em; }
+
+  figure { margin:28px 0 8px; }
+  .figframe { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:26px 24px 18px; box-shadow:var(--shadow); overflow-x:auto; }
+  figcaption { font-size:14px; color:var(--muted); margin-top:14px; line-height:1.5; max-width:68ch; }
+  figcaption b { color:var(--ink); font-weight:600; }
+  svg { display:block; max-width:100%; height:auto; }
+  svg text { font-family:"IBM Plex Mono",monospace; }
+  .d-box { fill:var(--surface-2); stroke:var(--line-2); stroke-width:1.5; }
+  .d-core { fill:var(--accent-sf); stroke:var(--accent); stroke-width:1.6; }
+  .d-plane { fill:var(--plane-sf); stroke:var(--plane); stroke-width:1.5; }
+  .d-lbl { fill:var(--ink); font-size:13px; font-weight:500; }
+  .d-lbl-s { fill:var(--muted); font-size:11.5px; }
+  .d-lbl-a { fill:var(--accent); font-size:11.5px; font-weight:600; }
+  .d-flow { stroke:var(--muted); stroke-width:1.6; fill:none; }
+  .d-flow-a { stroke:var(--accent); stroke-width:1.8; fill:none; }
+
+  .code-card { background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    overflow:hidden; box-shadow:var(--shadow); margin:16px 0; }
+  .code-top { display:flex; align-items:center; gap:8px; padding:9px 15px; border-bottom:1px solid var(--line);
+    background:var(--surface-2); }
+  .code-top .fn { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  pre { margin:0; padding:16px 18px; overflow-x:auto; font-family:"IBM Plex Mono",monospace;
+    font-size:13px; line-height:1.65; color:var(--ink); }
+  .ty { color:var(--accent); }
+  .kw { color:var(--plane); }
+  .cm { color:var(--muted); }
+
+  .component { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:22px 22px 18px; box-shadow:var(--shadow); margin:18px 0; }
+  .component > .cmp-resp { margin:6px 0 0; color:var(--muted); font-size:15px; }
+  .component > .cmp-resp b { color:var(--ink); }
+  .cmp-name { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .cmp-tag { font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.07em; color:var(--muted); border:1px solid var(--line-2); border-radius:20px;
+    padding:2px 9px; }
+  .cmp-tag.new { color:var(--accent); border-color:var(--accent); }
+  .cmp-tag.delta { color:var(--warn); border-color:var(--warn); }
+  .fcis-split { display:grid; grid-template-columns:1fr; gap:14px; margin-top:16px; }
+  @media (min-width:760px){ .fcis-split { grid-template-columns:1fr 1fr; } }
+  .fcis-core, .fcis-shell { border-radius:12px; padding:14px 15px; }
+  .fcis-core { background:var(--accent-sf); border:1px solid var(--accent); }
+  .fcis-shell { background:var(--surface-2); border:1px solid var(--line-2); }
+  .fcis-head { font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px; display:flex; gap:7px; align-items:center; }
+  .fcis-core .fcis-head { color:var(--accent); }
+  .fcis-shell .fcis-head { color:var(--muted); }
+  .fcis-core pre { background:transparent; padding:2px 0; font-size:12.5px; }
+  .fcis-shell ul { margin:0; padding-left:17px; }
+  .fcis-shell li { font-size:13.5px; color:var(--ink); line-height:1.5; margin:3px 0; }
+  .boundary { margin-top:14px; font-size:13.5px; color:var(--muted); }
+  .boundary b { color:var(--ink); font-weight:600; }
+
+  .checks { list-style:none; padding:0; margin:18px 0 0; display:grid; gap:10px; }
+  .checks li { display:flex; gap:12px; align-items:flex-start; background:var(--surface);
+    border:1px solid var(--line); border-radius:11px; padding:13px 16px; box-shadow:var(--shadow); }
+  .checks .ck { color:var(--good); font-weight:700; flex:none; }
+  .checks .ct { font-size:14px; line-height:1.5; }
+  .checks .ct b { font-weight:600; }
+
+  .note { display:flex; gap:13px; align-items:flex-start; background:var(--surface); border:1px solid var(--line);
+    border-left:3px solid var(--accent); border-radius:10px; padding:15px 17px; box-shadow:var(--shadow);
+    margin:18px 0; }
+  .note .nt { font-size:14.5px; line-height:1.55; }
+  .note .nt b { font-weight:600; }
+
+  footer { border-top:1px solid var(--line); margin-top:52px; padding:28px 0 56px; }
+  .foot-inner { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+</style>
+</head>
+<body>
+
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand">
+      <svg class="glyph" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <rect x="7" y="24" width="7" height="10" rx="1.5" stroke="currentColor" stroke-width="1.6"/>
+        <rect x="16.5" y="17" width="7" height="17" rx="1.5" stroke="currentColor" stroke-width="1.6"/>
+        <rect x="26" y="8" width="7" height="26" rx="1.5" stroke="currentColor" stroke-width="1.6"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">Swarm · P4</span>
+        <span class="brand-sub">component design · scale infrastructure</span>
+      </div>
+    </div>
+    <div class="masthead-meta">
+      <div>phase 4 of 6</div>
+      <div><b>cores stable</b> · shells scale</div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero measure">
+    <div class="eyebrow">Component Design · Phase 4</div>
+    <h1>The phase where the boundary pays off.</h1>
+    <p class="lede">P4 takes the swarm to a million machines &mdash; a <b>FoundationDB</b> registry, metric <b>rollups</b>, <b>backpressure</b>, and <b>rolling upgrades</b>. Almost none of it touches a core: the decisions were drawn pure back in P0&ndash;P3, so going to scale is a <b>shell</b> concern. That's the FCIS line earning its keep.</p>
+  </div>
+
+  <!-- 01 THE PAYOFF -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>Scaling is a shell change</h2></div>
+    <div class="sec-body">
+      <p class="measure">The store the registry writes to, the transport it rides on, the metrics it emits &mdash; all of that lives in the <strong>shell</strong>. The <em>decisions</em> &mdash; what the registry does with an event, where a task lands, whether a quorum agrees &mdash; live in cores that P4 doesn't touch. So swapping etcd for FoundationDB at a million machines is an implementation change behind an interface, not a redesign. The clearest proof: the registry's <code>apply</code>/<code>snapshot</code> core is byte-for-byte the P0 code.</p>
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 820 260" role="img" aria-label="The registry apply/snapshot core, unchanged since P0, talks to a Store interface. Under the interface the implementation swaps from etcd (P0 to P3) to FoundationDB (P4). The core is untouched.">
+            <defs>
+              <marker id="pa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+              <marker id="pm" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+            </defs>
+            <rect class="d-core" x="280" y="26" width="260" height="60" rx="13"/>
+            <text class="d-lbl-a" x="410" y="52" text-anchor="middle" font-weight="600" font-size="13">registry.apply / snapshot</text>
+            <text class="d-lbl-s" x="410" y="71" text-anchor="middle">pure · unchanged since P0</text>
+
+            <path class="d-flow" d="M410 86 L410 120" marker-end="url(#pm)"/>
+            <rect class="d-box" x="230" y="122" width="360" height="34" rx="9"/>
+            <text class="d-lbl" x="410" y="144" text-anchor="middle" font-size="12">Store interface</text>
+
+            <path class="d-flow" d="M330 156 L300 188" marker-end="url(#pm)"/>
+            <path class="d-flow-a" d="M490 156 L520 188" marker-end="url(#pa)"/>
+
+            <rect x="196" y="190" width="200" height="48" rx="10" fill="none" stroke="var(--line-2)" stroke-width="1.4" stroke-dasharray="4 4"/>
+            <text x="296" y="212" text-anchor="middle" fill="var(--muted)" font-size="12">etcd</text>
+            <text x="296" y="229" text-anchor="middle" fill="var(--muted)" font-size="10.5">P0–P3 · per region</text>
+            <line x1="212" y1="214" x2="380" y2="214" stroke="var(--muted)" stroke-width="1" opacity="0.5"/>
+
+            <rect x="424" y="190" width="200" height="48" rx="10" fill="var(--accent-sf)" stroke="var(--accent)" stroke-width="1.6"/>
+            <text x="524" y="212" text-anchor="middle" class="d-lbl-a" font-size="12">FoundationDB</text>
+            <text x="524" y="229" text-anchor="middle" fill="var(--muted)" font-size="10.5">P4 · sharded, at scale</text>
+
+            <text x="700" y="150" text-anchor="middle" fill="var(--muted)" font-size="11">swap the</text>
+            <text x="700" y="166" text-anchor="middle" fill="var(--muted)" font-size="11">implementation,</text>
+            <text x="700" y="182" text-anchor="middle" fill="var(--muted)" font-size="11">not the core</text>
+          </svg>
+        </div>
+        <figcaption><b>The store is a shell detail.</b> Because the registry core only ever returned a next-state value and never opened a connection, its persistence sits behind a <code>Store</code> interface &mdash; so etcd → FoundationDB is a shell swap, and every registry decision test still passes untouched.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 02 COMPONENTS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>Components</h2></div>
+    <div class="sec-body">
+
+      <!-- REGISTRY -->
+      <div class="component">
+        <div class="cmp-name"><h3>Sharded registry</h3><span class="cmp-tag delta">registry · delta from P0</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — the same registry, now on FoundationDB and partitioned by key range so no single store sees the whole fleet. P0's <code>apply</code>/<code>snapshot</code> is unchanged; only the store shell and one pure partitioning function are new.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="cm">// P0 unchanged: apply(reg, ev), snapshot(reg)</span>
+<span class="kw">func</span> shardOf(key Key) ShardID
+  <span class="cm">// range partition — which shard owns a key</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>FoundationDB transactions behind the <code>Store</code> interface</li>
+              <li>route each key to its shard via <code>shardOf</code></li>
+              <li>replication + failover are the store's job, not ours</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — a key in; a shard out. The FCIS proof of the phase: going to FDB added one pure function and a new shell, and changed no decision logic anywhere.</p>
+      </div>
+
+      <!-- OBSERVABILITY -->
+      <div class="component">
+        <div class="cmp-name"><h3>Observability aggregation</h3><span class="cmp-tag new">observability · new</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — keep metric cardinality bounded at a million machines by rolling up per cell, then per region, then global (brief rule O1). Pure associative folds; only collection and emission are I/O.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> rollup(cells <span class="ty">[]CellMetrics</span>) RegionMetrics
+<span class="kw">func</span> rollup(rs <span class="ty">[]RegionMetrics</span>) GlobalMetrics
+<span class="kw">func</span> budget(level Level) Cardinality
+  <span class="cm">// how much detail each level keeps</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>receive metrics from agents; emit via OpenTelemetry</li>
+              <li>store only the reduced series</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — raw metrics in; a bounded rollup out. Because <code>rollup</code> is associative, the two-step hierarchical reduce equals a flat one &mdash; a property test, and the reason cardinality stays bounded instead of exploding with fleet size.</p>
+      </div>
+
+      <!-- BACKPRESSURE -->
+      <div class="component">
+        <div class="cmp-name"><h3>Backpressure &amp; rate-limiting</h3><span class="cmp-tag new">transport · new</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — keep the control plane stable under load by deciding, purely, when to admit, throttle, or shed. Enforcement is the shell's job.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> admitUnderLoad(req Req, load LoadState,
+                    lim Limits) LoadDecision
+  <span class="cm">// = Admit | Throttle{delay} | Shed</span>
+<span class="kw">func</span> updateLoad(load LoadState, ev LoadEvent) LoadState</pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>measure queue depths and in-flight RPCs</li>
+              <li>apply the decision: delay, reject, or token-bucket</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — request + load snapshot + limits in; a decision out. "At 95% capacity, low-priority → <code>Shed</code>" is a pure test, so the shell never has to guess when to push back.</p>
+      </div>
+
+      <!-- ROLLING UPGRADE -->
+      <div class="component">
+        <div class="cmp-name"><h3>Rolling upgrade</h3><span class="cmp-tag new">deploy · new</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — upgrade the fleet one cell at a time with zero job loss, only across compatible versions (brief rule O2). The sequencing and skew-safety are pure; the cordon/roll is shell.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> nextDrain(fleet FleetState, plan UpgradePlan) DrainStep
+  <span class="cm">// DrainStep = Cordon{CellID} | Done</span>
+<span class="kw">func</span> skewSafe(a, b Version) <span class="ty">bool</span>
+  <span class="cm">// is this version pair wire-compatible?</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>cordon the chosen cell; let jobs checkpoint-migrate or drain</li>
+              <li>roll the binary; uncordon</li>
+              <li>refuse a step if <code>skewSafe</code> is false</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — fleet + plan in; a drain step out. The upgrade is a pure plan the shell executes; "never drain two cells of the same job at once" is a test on <code>nextDrain</code>, so zero-loss is a decision, not a hope.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 03 1M VALIDATION -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>The 1M-node validation targets the shell</h2></div>
+    <div class="sec-body">
+      <p class="measure">Because the decision cores were exhaustively tested in isolation across P0&ndash;P3, the sustained-scale run isn't hunting logic bugs &mdash; it's proving the <strong>infrastructure</strong> holds. That's a cleaner test: any failure is a shell/scale problem (a store limit, a transport ceiling), not a tangled question of "is the logic also wrong?"</p>
+      <ul class="checks">
+        <li><span class="ck">✓</span><span class="ct"><b>Registry write rate</b> — FoundationDB sustains membership churn across the sharded key space.</span></li>
+        <li><span class="ck">✓</span><span class="ct"><b>Metric cardinality</b> — rollups keep the observability series bounded as machine count climbs.</span></li>
+        <li><span class="ck">✓</span><span class="ct"><b>Control-plane stability</b> — backpressure holds admission steady under a load spike.</span></li>
+        <li><span class="ck">✓</span><span class="ct"><b>Zero-loss upgrade</b> — a full rolling upgrade completes with no dropped jobs and tolerated version skew.</span></li>
+      </ul>
+      <div class="note"><span class="nt"><b>The boundary made the scale test tractable.</b> With cores proven pure and the shells the only variable, "does it work at a million?" becomes a set of infrastructure SLOs to measure &mdash; not a search for correctness bugs hiding in the interaction of logic and I/O.</span></div>
+    </div>
+  </section>
+
+  <!-- 04 DEFERRED -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>What P4 defers</h2></div>
+    <div class="sec-body">
+      <p class="measure">P4 makes the swarm survive its own size. Two phases remain, both over the same boundary. <strong>P5 (production readiness)</strong> adds multi-tenancy (quotas, fairness, isolation), disaster recovery + chaos testing, SLAs, and optional core-tier attestation &mdash; new admission and policy <em>cores</em> with hardening in the shell. <strong>P6 (self-tuning)</strong> upgrades mitosis to split on a measured signal and refines capability/locality placement (short of a solver, per brief §18) &mdash; the last cores to write, still returning decisions the shell carries out.</p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot-inner">
+      <span>Swarm · P4 component design</span>
+      <span>cores unchanged · shells scaled · same FCIS line</span>
+    </div>
+  </footer>
+
+</div>
+
+</body>
+</html>

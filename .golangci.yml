@@ -1,0 +1,46 @@
+# golangci-lint config. The authoritative core-purity guard is tools/fcischeck
+# (run separately in CI and hooks); depguard here is a secondary import boundary.
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - depguard
+    - govet
+    - errcheck
+    - ineffassign
+    - unused
+    - gofmt
+    - misspell
+
+linters-settings:
+  gofmt:
+    simplify: true
+  depguard:
+    rules:
+      core-is-pure:
+        files:
+          - "**/internal/core/**"
+        deny:
+          - pkg: "net"
+            desc: "core is pure — no networking; put it in internal/shell"
+          - pkg: "net/http"
+            desc: "core is pure — no networking"
+          - pkg: "os"
+            desc: "core is pure — no filesystem or env; inject inputs as data"
+          - pkg: "os/exec"
+            desc: "core is pure — no process execution"
+          - pkg: "database/sql"
+            desc: "core is pure — no database access"
+          - pkg: "google.golang.org/grpc"
+            desc: "core is pure — no RPC"
+          - pkg: "github.com/nats-io/nats.go"
+            desc: "core is pure — no message bus"
+          - pkg: "github.com/msivraj/swarm/internal/shell"
+            desc: "core must never import shell — the dependency points the other way"
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck

@@ -1,0 +1,641 @@
+===============================================================================
+SWARM — CELL ARCHITECTURE
+Cell-based orchestration for 2 → 1,000,000 tightly-coupled machines
+Design brief · forge/swarm
+===============================================================================
+
+THESIS
+A fleet that divides instead of resizing. Orchestrate 2 to a million
+tightly-coupled machines by confining coordination to bounded CELLS that split
+and merge as the swarm grows — no global optimizer, no global consensus.
+
+Key numbers:
+  - Target fleet size ............. 1,000,000 machines
+  - Coordination cost / node ...... O(1)  (flat as cells multiply)
+  - Split / merge hysteresis band . 2x
+  - Inputs that drive placement ... 1 field (job.coupling)
+
+
+-------------------------------------------------------------------------------
+01 — THE REQUIREMENT THAT FORCES THE WHOLE DESIGN
+-------------------------------------------------------------------------------
+The brief asks for three things at once, and taken literally on one flat
+topology the trio is not buildable — each pair fights the third:
+
+  A. TIGHT COUPLING — machines share state, barriers, or a leader.
+     Coordination has a real per-link cost.
+  B. SCALE TO 1M — all-to-all is O(N^2); a million nodes is 10^12 links.
+     Global consensus (Raft/Paxos) caps at ~5–7 voting members.
+  C. LOW LATENCY — coordinated global decisions can't also be fast.
+     The speed of light is the ceiling.
+
+  A + B + C, applied to one flat topology  ->  IMPOSSIBLE
+
+RESOLUTION: confine the tight coupling to bounded groups, and make the groups
+loosely coupled to each other. Those groups are CELLS. Tight coupling lives
+INSIDE a cell; cells barely talk. Growing from ten thousand machines to a
+million just means MORE CELLS — coordination cost per node stays flat.
+Everything below follows from that one move.
+
+
+-------------------------------------------------------------------------------
+02 — TOPOLOGY
+-------------------------------------------------------------------------------
+Four parts, and only four. This is the irreducible core:
+
+  1. CONTROL PLANE — plans work (Planner · Scheduler · Cell registry)
+  2. CELLS — run the work; tight coupling contained inside each
+  3. GOSSIP — membership + health inside each cell
+  4. ASYNC MESSAGES — loose coupling between cells
+
+  [Diagram] Control plane on top routes tasks down to cells. Each cell holds a
+  Raft-elected LEADER (L) plus a worker pool, coordinated by gossip. Between
+  cells there is only asynchronous message passing — the boundary that keeps
+  the coordination bill flat as cells multiply.
+
+WHY GOSSIP INSIDE, A PLANNER ON TOP
+Gossip — specifically SWIM (the protocol behind Serf, Consul, Cassandra) — is
+genuinely fast with CONSTANT per-node overhead, but only for the job it is good
+at: membership, failure detection, and spreading capacity metadata. A new
+machine joins the swarm by gossiping itself in; no central registration
+bottleneck. That is dynamic scaling at the membership layer.
+
+What gossip must NOT own is authoritative task assignment. Tight coordination
+needs someone to decide — a barrier to release, a leader to elect — so the
+queue is fed by a PLANNER: submitters hand in high-level jobs, the planner
+decomposes them into tasks and routes them to the right cell, and workers PULL.
+Centralized planning, decentralized dispatch — the hot path has no central
+bottleneck.
+
+
+-------------------------------------------------------------------------------
+03 — MITOSIS: HOW CELLS SCALE
+-------------------------------------------------------------------------------
+Cells do NOT continuously resize to chase an optimum. Rebalancing a
+tightly-coupled cell means tearing down and rebuilding its coordination state —
+the single most expensive operation in the system — so it is done rarely, and
+only at thresholds. A cell has a target size T:
+
+  - SPLIT when size > 2T      -> two cells of ~T each, both healthy
+  - MERGE two neighbors when combined size < T   -> merged cell <= T
+  - STABLE ZONE: T <= size <= 2T   -> do nothing
+
+The 2x gap is a hysteresis band: a freshly-split cell sits at ~T, far from the
+merge trigger, so it cannot oscillate. Two guardrails harden it:
+  - COOLDOWN: no split/merge on the same cell within minutes.
+  - SUSTAINED WINDOW: the condition must hold for a window, not a spike.
+
+STARTING THRESHOLDS (size T off the coupling tightness):
+
+  Coupling            Target T      Split >      Cell character
+  ------------------  -----------   ----------   ------------------
+  Barrier / lockstep  64–128        128–256      small, one rack/AZ
+  Leader-driven       ~1,000        2,000        medium
+  Message-passing     few x 10^3    2x that      large
+
+Once running, graduate the trigger from a COUNT to a MEASURED signal (e.g.
+split when the cell's barrier-completion p99 crosses your latency SLO).
+
+  R1 — RESIZE ONLY AT TASK BOUNDARIES. A machine mid-barrier is a member of the
+       barrier group; yanking it corrupts the computation. Splits/merges wait
+       for a safe point; the leader coordinates the membership change.
+  R2 — NEW JOINS FILL, THEN DIVIDE. Machines gossip in and land in cells until
+       one crosses 2T and splits. That IS the dynamic scaling — no global
+       optimizer chasing "optimum."
+
+
+-------------------------------------------------------------------------------
+04 — THE JOB DECLARES ITS OWN COUPLING
+-------------------------------------------------------------------------------
+Coupling is a per-job property the submitter declares — like Slurm's MPI job
+type, Volcano's gang scheduling, or AWS placement groups. One field dials cell
+size, placement locality, resize-safety, and admission policy at once.
+
+Spectrum (tightest -> loosest):
+
+  BARRIER            MESSAGE-PASSING        INDEPENDENT
+  (lockstep)         (chatty, not          (embarrassingly
+  small cells·gang   blocking) med cells   parallel) large·spray
+  ----------------   ------------------    -------------------
+  sync ML (all-      actor systems         frame rendering
+  reduce SGD)        async/Hogwild ML      map-reduce map phase
+  CFD/climate sim    streaming pipelines   Monte Carlo sampling
+  BSP graph (Pregel)                       parameter sweeps
+  MPI / HPC
+
+MANIFEST (job.yaml):
+  coupling: barrier          # independent | message-passing | leader | barrier
+  min_members: 128           # gang size — all-or-nothing admission
+  locality: same-az          # affinity hint for tight jobs
+
+HOW THE PLANNER READS IT — one field, three downstream decisions:
+  - PLACEMENT: barrier jobs go into small, low-latency, AZ-local cells and are
+    gang-scheduled; independent jobs spray across any cell with capacity.
+  - RESIZE-SAFETY: barrier jobs are frozen against mid-flight resize;
+    independent jobs are freely preemptible and movable.
+  - ADMISSION (GANG SCHEDULING): a barrier job must be placed all-or-nothing.
+    Start it with half its members and the started half deadlock at the first
+    barrier, waiting on peers that were never scheduled. So min_members must be
+    satisfiable before the job starts at all.
+
+
+-------------------------------------------------------------------------------
+05 — SUBSTRATE STAYS FIXED; THE DRIVER PLUGS IN PER JOB
+-------------------------------------------------------------------------------
+The flavor of coordination belongs to the JOB, not the platform. A cell is not
+born with a personality. Every cell runs the same PERMANENT SUBSTRATE; what the
+leader executes is a COORDINATION DRIVER loaded from the job's coupling field
+for that job's lifetime. The cell is the room; the job brings its own
+coordination style and packs it up when it leaves.
+
+  - Permanent substrate (every cell, always): gossip membership, Raft leader,
+    worker pool.
+  - Pluggable driver (loaded per job from job.coupling): one of four below.
+
+DRIVER COMPARISON — the two things that really constrain a design are failure
+cost and cell size:
+
+  Driver           Leader runs           Failure cost            Cell size     Resize
+  ---------------  --------------------  ----------------------  ------------  ---------------
+  independent      nothing — pull queue  trivial · re-queue      large·1000s   any time
+  barrier          gate step·all-reduce  high · checkpoint restart small·10s-100s checkpoint only
+  leader           assign rounds·state   moderate · re-elect     medium·~1000s between rounds
+  message-passing  route mailboxes       low · restart one actor large·1000s   any time
+
+  R3 — UNSPECIFIED COUPLING DEFAULTS TO INDEPENDENT. The safe floor: no
+       coordination, can't deadlock, trivial recovery, resizes freely. Users
+       opt into the tighter drivers explicitly.
+  R4 — TIGHTLY-COUPLED JOBS GET DEDICATED CELLS. A cell runs one flavor at a
+       time, so its leader never juggles a barrier for job A and a router for
+       job B. The gang reserves the cell for its lifetime; independent jobs,
+       needing no driver, share cells freely.
+
+
+-------------------------------------------------------------------------------
+06 — THE V1 TASK LIBRARY
+-------------------------------------------------------------------------------
+A built-in task is the ON-RAMP, not a demo. Each template bundles a driver plus
+sensible defaults (min_members, locality, how to split the work, how to merge
+results), so a user runs `swarm run monte-carlo --samples 1e12` without ever
+thinking about cells. The v1 suite spans all four drivers, so the library
+doubles as proof every mode works.
+
+  Template        Driver           min   Split by                    Merge
+  --------------  ---------------  ----  --------------------------  -------------------
+  decrypt         independent      1     keyspace range              first-hit
+  brute-force     independent      1     candidate space·wordlist/mask first-hit
+  monte-carlo     independent      1     seed / sample block         sum · statistics
+  batch-render    independent      1     frame / tile / segment      reassemble
+  param-sweep     independent      1     config point                rank · collect
+  dist-training   barrier          8+    data shard                  all-reduce gradients
+  sci-sim         barrier          8+    spatial domain              boundary exchange
+  agent-sim       message-passing  4+    agent partition             aggregate state
+  graph-compute   leader           4+    vertex partition            superstep combine
+
+What each is:
+  - decrypt ...... Recover a key or plaintext from known ciphertext by testing
+                   candidate keys across a range.
+  - brute-force .. Find an unknown input (password, hash preimage) by trying
+                   candidates from a wordlist or mask.
+  - monte-carlo .. Estimate a result from a huge number of independent random
+                   samples, then aggregate — pricing, risk, physics.
+  - batch-render . Produce many independent outputs — 3D frames, ray-traced
+                   tiles, video segments — then reassemble.
+  - param-sweep .. Run one program across a grid of configurations —
+                   hyperparameter search, ablations, tuning.
+  - dist-training  Train one model across machines, averaging gradients every
+                   step (synchronous SGD / all-reduce).
+  - sci-sim ...... Simulate a physical system on a decomposed grid, exchanging
+                   boundaries each timestep — CFD, climate, N-body.
+  - agent-sim .... Simulate many autonomous agents that message their neighbors
+                   — epidemiology, traffic, markets.
+  - graph-compute  Run graph algorithms (PageRank, shortest paths, community
+                   detection) in coordinated supersteps.
+
+Because the default is `independent`, five of the nine need no coordination at
+all — the bread-and-butter, where most users start. decrypt and brute-force
+stay separate: same driver, but they split work differently (keyspace range vs.
+wordlist/mask candidate space) and are documented around the legitimate uses —
+key recovery, password auditing, cipher benchmarking. The two barrier templates
+are the flagship HPC workloads; agent-sim and graph-compute exercise the
+remaining two drivers so nothing ships untested.
+
+
+-------------------------------------------------------------------------------
+07 — CELL INTERNALS: THE `barrier` DRIVER
+-------------------------------------------------------------------------------
+Barrier is the hardest driver and the one the flagship workloads
+(dist-training, sci-sim) depend on, so it is the reference protocol. A barrier
+cell runs the same substrate as any other, but its leader loads a BARRIER
+COORDINATOR that marches every worker through one strict lockstep loop and owns
+the checkpoint that makes failure survivable.
+
+THE STEP LOOP (one iteration at a time):
+  COMPUTE step N on own shard
+    -> BARRIER: wait for all done (the defining hop — fast workers wait for
+       the slowest)
+    -> ALL-REDUCE: combine partial results into shared data (averaged
+       gradients, exchanged boundaries)
+    -> ADVANCE: release everyone into step N+1
+  Every K steps: CHECKPOINT — persist shard state to durable storage.
+  On failure: a lost member makes the in-flight step INVALID -> RESTORE from
+  the last checkpoint and resume. That checkpoint is the whole safety net.
+
+THE STRAGGLER IS THE TAX YOU ALWAYS PAY. Because the barrier waits for the
+slowest, one slow machine slows the entire cell EVERY step — this is why
+barrier cells stay small (more members -> higher odds one is slow -> longer
+tail). The coordinator sets a PER-STEP DEADLINE: a worker that misses it is not
+waited on forever, it is declared dead by gossip and handled as a failure. That
+converts an unbounded hang into a bounded, recoverable event.
+
+FAILURE AND RECOVERY. A worker lost mid-step makes the step's partials
+incomplete, so the step is invalid — there is no partial credit in lockstep.
+Recovery is always: restore the last checkpoint, re-partition the shard across
+surviving/replacement members, replay forward. If the LEADER is lost, Raft
+elects a new leader from within the cell and it resumes from replicated
+checkpoint metadata. Cadence K is the one real tuning knob: smaller K = less
+recompute after failure, more steady-state overhead.
+
+WHERE MITOSIS MEETS LOCKSTEP (R1 made concrete). A member can't join/leave
+mid-step without corrupting the barrier group, so split and merge happen ONLY
+at a checkpoint boundary: the coordinator quiesces at the next checkpoint,
+persists state, the cell divides, each half reloads its slice of the shard, and
+both resume from that checkpoint. Growing a running job's membership reshapes
+the data partition the same way — a checkpoint-boundary operation, never live.
+
+  B1 — Bound the barrier with a per-step deadline. A missed deadline is a
+       failure to recover from, not a wait to endure.
+  B2 — Checkpoint every K steps. It's the only resume point a lockstep job has;
+       K trades steady-state overhead against recompute-on-failure.
+  B3 — Resize only at a checkpoint boundary. Quiesce, snapshot, divide or grow,
+       reload shards, resume — never swap a member mid-step.
+  B4 — All members present before step 0. Gang admission is mandatory — start
+       with a partial group and it deadlocks at the very first barrier.
+
+
+-------------------------------------------------------------------------------
+08 — CELL INTERNALS: THE `leader` DRIVER
+-------------------------------------------------------------------------------
+The leader driver runs coordinated ROUNDS (BSP supersteps) with one authority
+holding the global state. It powers graph-compute. Workers are not symmetric
+peers — the leader hands out work and folds results, so failure is asymmetric.
+
+  ROUND: leader ASSIGNS work + state to followers -> followers COMPUTE their
+  shard -> followers REPORT results -> leader FOLDS results and ADVANCES the
+  superstep -> next round.
+
+Asymmetric failure: a lost FOLLOWER is a cheap reassignment inside the round;
+a lost LEADER is the real event — Raft promotes a new one from the cell and
+resumes from the replicated checkpoint. The leader's fan-out/fan-in bandwidth
+caps the cell at low thousands.
+
+  L1 — Only the leader's state is precious. Replicate and checkpoint it;
+       followers hold nothing that can't be recomputed from a reassignment.
+  L2 — Membership changes between rounds. The leader rebalances assignments at
+       a round boundary — cheaper than barrier because the leader mediates.
+
+
+-------------------------------------------------------------------------------
+09 — CELL INTERNALS: THE `message-passing` DRIVER
+-------------------------------------------------------------------------------
+The actor model: each worker has an address and a mailbox, sends messages to
+specific peers, and reacts to what arrives. No global barrier, no central
+authority, no shared memory — progress is emergent. It powers agent-sim.
+
+Actors exchange asynchronous messages peer-to-peer. Failure is LOCAL: a
+supervisor restarts a crashed actor from its last snapshot and in-flight
+messages are redelivered. The price of that resilience is no global ordering or
+consistency guarantee — the message protocol must provide it.
+
+  M1 — Design messages idempotent and order-tolerant. There is no global
+       ordering; a redelivered or out-of-order message must not corrupt state.
+  M2 — Failure is local. A supervisor restarts one actor from its snapshot —
+       no global rollback, so cells can stay large.
+
+
+-------------------------------------------------------------------------------
+10 — CELL INTERNALS: THE `independent` DRIVER
+-------------------------------------------------------------------------------
+The default, and the simplest: no driver at all. The cell is a PULL QUEUE,
+workers grab tasks that reference nothing but their own input, and results are
+collected at the end. It powers five of the nine library templates.
+
+  TASK QUEUE -> workers PULL -> workers COMPUTE (no inter-worker edges) ->
+  COLLECT / merge results.  A failed task is simply RE-QUEUED for someone else.
+
+This is the one driver where a cell can grow or shrink MID-JOB (the exception
+to R1), because there is no coordination state to disturb.
+
+  I1 — Make tasks idempotent and re-runnable. Recovery is re-queue-and-retry,
+       so a task that runs twice must produce one correct result.
+  I2 — The only shared step is the final merge. If work needs to coordinate
+       before the end, it isn't independent — it belongs on a heavier driver.
+
+
+-------------------------------------------------------------------------------
+11 — THE CLI IS THE OPERATIONAL SURFACE
+-------------------------------------------------------------------------------
+Operational simplicity is a thin client over the control-plane API — the whole
+million-node fleet reduced to a handful of verbs.
+
+  $ swarm submit job.yaml --wait
+    planned 4,096 tasks · coupling=barrier · gang=128
+    placed -> cell b7 (az-1) · admitted OK
+
+  $ swarm ps
+    CELLS 812  MACHINES 41,203  JOBS 27  splits/1h 9
+
+  $ swarm scale job-4f2 --members +512
+  $ swarm logs job-4f2 --follow
+  $ swarm cell b7 --describe      # leader, members, health, size vs 2T
+
+
+===============================================================================
+PART II — BUILD
+===============================================================================
+
+-------------------------------------------------------------------------------
+12 — TECH STACK
+-------------------------------------------------------------------------------
+Stance: reuse proven libraries for the hard distributed primitives, build only
+what is unique to Swarm. Go for the control plane, agent, and CLI (I/O-bound
+orchestration; the primitive ecosystem is Go-native). Rust on the hot path (the
+WASM host and worker data path). Both cross-compile to every OS/arch, so the
+agent ships as one native binary per platform.
+
+  Component                              Technology                       Stance
+  -------------------------------------  -------------------------------  ------
+  Control plane · planner · scheduler    Go                               build
+  Cell agent (every machine)             Go + Rust runtime                build
+  Membership + failure detection         memberlist (SWIM)                reuse
+  Per-cell leader + replicated log       hashicorp/raft                   reuse
+  RPC (plane<->agent, leader<->worker)   gRPC / protobuf                  reuse
+  Cell-to-cell async messages            NATS                             reuse
+  Open-tier workload sandbox             Wasmtime (WASM/WASI)             reuse
+  Core-tier isolation + GPU              cgroups / Job Objects + passthru build-thin
+  Barrier collectives (core tier)        NCCL · custom over gRPC          mixed
+  Checkpoint + artifact store            object store (S3/MinIO/local)    reuse
+  Control-plane state (registry, jobs)   etcd per region -> FoundationDB  reuse
+  Result verification (open tier)        redundant execution + quorum     build
+  Observability                          OpenTelemetry + cell aggregation reuse
+  Mitosis · coupling drivers · placement Go / Rust                        build*
+
+  * The build rows are the Swarm-unique core — the mitosis controller, the four
+    coupling drivers, and capability-based placement. Everything else is an
+    integrated library, not a reinvented one.
+
+
+-------------------------------------------------------------------------------
+13 — THE CONTROL PLANE IS REGIONAL
+-------------------------------------------------------------------------------
+A single control plane cannot hold a million machines — its state store and
+scheduler would become the exact bottleneck the cell design avoids. So the
+control plane SHARDS BY REGION, mirroring the fleet: each region owns its own
+planner, rendezvous, and cell registry, and regions coordinate only loosely and
+asynchronously. A thin GLOBAL LAYER handles cross-region routing and an
+aggregate, eventually-consistent view — never strongly-consistent state on the
+hot path.
+
+  GLOBAL LAYER (cross-region routing · eventually consistent)
+     |  async
+     +--> REGION us-east: planner · rendezvous · registry -> cells a1, a2
+     +--> REGION eu-west: planner · rendezvous · registry -> cells b1, b2
+
+  A1 — No global strongly-consistent state on the hot path. A region schedules
+       from its own store; the global layer is eventually consistent and off
+       the critical path.
+  A2 — A region is a blast-radius boundary. A region failing takes its own
+       cells, not the fleet — and its agents re-home to a healthy region.
+
+
+-------------------------------------------------------------------------------
+14 — THE CROSS-OS AGENT AND NAT-FRIENDLY NETWORKING
+-------------------------------------------------------------------------------
+Swarm installs as ONE NATIVE BINARY PER OS/ARCH (Go + Rust runtime). Because
+volunteer and edge machines sit behind NAT and firewalls, the agent DIALS OUT
+to its regional rendezvous rather than being dialed into — no inbound ports,
+works anywhere. On connect it advertises its CAPABILITIES over gossip
+(os · arch · cores · ram · gpu · locality · trust tier), and those capabilities
+are exactly what the planner places jobs against.
+
+  MACHINE (any OS) [swarm agent]  --dials out, mTLS-->  REGIONAL RENDEZVOUS
+     (behind NAT / firewall)                            --> join cell + gossip
+  Outbound-only: no inbound ports opened on the machine.
+
+
+-------------------------------------------------------------------------------
+15 — TWO EXECUTION TIERS
+-------------------------------------------------------------------------------
+Trust and capability are the same axis (section 05), so the runtime a task gets
+is decided by the TIER of the machine it lands on.
+
+  OPEN TIER   — untrusted, heterogeneous. Workloads run CPU-only in a WASM
+                sandbox (Wasmtime), the one sandbox uniform across every OS.
+                Because an untrusted machine can return wrong results, every
+                result is confirmed by QUORUM across redundant runs. Runs
+                independent / loose jobs.
+  CORE TIER   — trusted, homogeneous. Native + GPU, run once, no verification
+                needed. The ONLY home for barrier / tight jobs (training,
+                sci-sim) — WASM has no production GPU path.
+
+  V1 — Open-tier results are quorum-verified before acceptance. Run each task
+       redundantly and accept only the agreed answer.
+  V2 — GPU and tight jobs are core-tier only. WASM has no production GPU path.
+  V3 — Sensitive data never leaves the core tier. The open tier only ever sees
+       non-sensitive, verifiable work.
+
+
+===============================================================================
+PART III — OPERATE & SHIP
+===============================================================================
+
+-------------------------------------------------------------------------------
+16 — FAILURE MODES AND OPERATIONS
+-------------------------------------------------------------------------------
+The whole architecture is a set of CONTAINMENT BOUNDARIES: a failure is absorbed
+at the level it happens and never escalates outward. A worker dying is a cell's
+problem; a cell dying is a region's problem; a region dying is the fleet's
+problem — and each outer level barely notices the inner one.
+
+SELF-REGISTRATION & THE RECONNECT LOOP. Machines join themselves — the swarm
+never reaches in. An agent DIALS OUT to its regional rendezvous and retries with
+backoff and jitter, FOREVER, failing over to another region if its own is
+unreachable. It ENROLLS ONCE for a SPIFFE identity, joins a cell, and stays a
+member via gossip heartbeats. On any drop it RESUMES the dial loop — keeping its
+identity — and the agent is crash-only, so a restart just re-runs the loop.
+
+  DIAL (backoff+jitter · fail over region) -> ENROLL once -> JOIN cell -> HEARTBEAT
+     ^--------------- connection lost -> resume dial loop, keep identity ---------+
+
+  FLEET  [ REGION  [ CELL  [ WORKER ] ] ]
+    worker loss -> cell re-queues / rolls back to checkpoint / reassigns
+    cell loss   -> region reschedules its jobs; neighbors merge
+    region loss -> agents re-home; global layer routes around
+
+  Failure                 Detected by            Response
+  ----------------------  ---------------------  --------------------------------
+  Worker / machine dies   gossip (SWIM)          driver-specific: re-queue /
+                                                 rollback / reassign / restart
+  Cell leader dies        Raft                   re-elect from cell; resume log
+  Whole cell dies         cell heartbeat lost    planner reschedules; neighbors merge
+  Rendezvous dies         agent reconnect        agent dials next rendezvous
+  Region dies             region heartbeat lost  agents re-home; global routes around
+  Regional planner dies   replicated (Raft/etcd) standby takes over; pulls continue
+  Cell network partition  SWIM + Raft            minority steps down; barrier -> deadline
+  Straggler               per-step deadline      declared dead; recovered as failure (B1)
+  Open-tier bad result    quorum mismatch        reject and re-run (V1)
+
+OPERATING AT FLEET SCALE. Two things change at a million machines. Observability
+can't scrape per node — metrics are pre-aggregated at the cell and rolled up per
+region, so cardinality stays bounded. Upgrades roll by draining: the agent is a
+single binary, so a cell is cordoned, its jobs checkpoint-migrate or drain, and
+the new version rolls in (gRPC/protobuf keeps mixed versions compatible).
+Machine maintenance is the same primitive: cordon, drain, done.
+
+  O1 — Observe at the cell, not the node. Pre-aggregate per cell and per region;
+       per-node scraping does not survive a million machines.
+  O2 — Upgrade and maintain by draining. Cordon a cell, let jobs
+       checkpoint-migrate, roll the binary; protocol compat covers version skew.
+  O3 — Agents self-register and never give up. Dial-out with backoff and jitter,
+       retry forever, fail over across regions; identity kept across reconnects.
+  O4 — Detection is adaptive by tier; recovery is automatic. Fast eviction for
+       tight core-tier jobs, patient for the open tier; the planner reschedules
+       failed jobs itself, no human in the loop.
+
+
+-------------------------------------------------------------------------------
+17 — SECURITY MODEL
+-------------------------------------------------------------------------------
+Every machine that joins gets a CRYPTOGRAPHIC IDENTITY. It presents an
+enrollment token (operator-issued for core-tier, anonymous self-serve for open
+tier), the control-plane CA (SPIFFE/SPIRE) issues it an mTLS certificate, and from then on every
+connection (rendezvous, planner, cell gossip) is mutually authenticated and
+encrypted. The trust tier is baked into the identity, so the planner gates
+placement on it.
+
+  MACHINE --1: enroll (token)--> CONTROL-PLANE CA --2: mTLS identity cert-->
+  AGENT --3: every connection mTLS--> rendezvous / planner / gossip
+
+WHAT A MALICIOUS PARTICIPANT CAN DO. A participant is only a worker: pull, run,
+return, gossip its own health. So a hostile machine's whole repertoire is three
+moves — LIE about its result, READ what it's handed, and FAKE MANY IDENTITIES
+(Sybil). The architecture shrinks even that: open-tier jobs are INDEPENDENT
+(workers never talk), and untrusted machines are never placed in tight cells, so
+a bad machine has no peer to attack — its blast radius is its own single task.
+Sensitive data never reaches it (V3); gossip is authenticated. Hence a pragmatic
+threat model: the real risk is lying about your own work, possibly at scale.
+
+SYBIL RESISTANCE WITHOUT ACCOUNTS. A Sybil attack is one attacker running many
+fake identities to win a quorum vote. Self-reported hardware IDs don't stop it —
+a MAC address is trivially spoofed, invisible across the internet, and fresh per
+VM. Real hardware binding needs TPM / SPIRE node attestation (core tier only).
+So the open tier makes extra identities USELESS instead of preventing them:
+  - Quorum + random assignment: forcing a wrong answer needs a large fraction of
+    total compute, not a few fake nodes.
+  - Reputation gating: new identities start at zero trust; trust is earned only
+    by agreeing with quorum over time.
+  - Honeypot spot-checks: a known-answer task; lie once, get blacklisted.
+  - Optional proof-of-work to enroll: a cost floor on mass identity creation.
+
+  Threat                                 Mitigation
+  -------------------------------------  ----------------------------------------
+  Malicious/faulty host lies on results  quorum verification (V1); sensitive =core
+  Sybil — one attacker, many identities  quorum + random assign; reputation; honeypot; PoW
+  Malicious workload code                WASM sandbox; signed+verified; WASI least-priv
+  Network attacker (MITM/eavesdrop)      mTLS everywhere; encrypted gossip + NATS
+  Rogue machine joining                  enrollment tokens; issued identity; tier gating
+  Data exfiltration                      sensitive data core-tier only (V3); encryption
+  Cross-tenant interference              dedicated cells per tight job (R4); sandbox
+
+  S1 — Every participant has a cryptographic identity. mTLS on every connection;
+       no anonymous access to the control plane.
+  S2 — Workloads are signed and verified before running. Agents refuse code whose
+       signature doesn't check — blocks tampered or spoofed tasks.
+  S3 — Least privilege by default. WASI grants only the resources a job declares;
+       core-tier native jobs run under OS limits.
+  S4 — Bind identity to hardware only where you can. Core-tier uses TPM / SPIRE
+       node attestation; the open tier can't (self-reported IDs are forgeable),
+       so it relies on quorum and reputation instead.
+
+
+-------------------------------------------------------------------------------
+18 — DELIBERATELY NOT BUILDING THIS
+-------------------------------------------------------------------------------
+The core is four moving parts. Each item below buys cost and fragility without
+buying the requirements:
+
+  - CONTINUOUS REBALANCING — a control loop chasing "optimum" cell sizes pays
+    the tear-down cost constantly. Split/merge at thresholds gets stability
+    for free.
+  - CROSS-CELL CONSENSUS — any global agreement reintroduces the O(N^2) /
+    5–7-voter wall. Cells coordinate only through async messages.
+  - PLACEMENT OPTIMIZATION — elaborate bin-packing across a million nodes. The
+    coupling field plus "fill until 2T" is enough; measure before adding a
+    solver.
+
+
+-------------------------------------------------------------------------------
+19 — PHASED ROADMAP
+-------------------------------------------------------------------------------
+The sequence proves a working, geo-distributed swarm on easy workloads first,
+then adds capability, openness, scale, and finally self-tuning — each phase
+gated by a concrete exit criterion. It stays inside section 18's non-goals: the
+later phases refine what we designed, never a rebalancing optimizer or a heavy
+placement solver.
+
+  P0 — CORE LOOP + EASY MITOSIS (single region, trusted, native)
+     Ships: agent self-registration (dial-out, backoff/jitter) · gossip
+       membership · split/merge (independent) · planner->queue->pull · CLI.
+       Templates: keyspace-search, monte-carlo.
+     Exit: an independent job runs on a self-scaling single-region fleet and
+       returns correct results; cells split and merge under load.
+
+  P1 — MULTI-REGION REACH (still independent)
+     Ships: regional control planes · per-region rendezvous · retry-forever +
+       cross-region failover · thin global routing · cross-region spread. Plus
+       the throwaway barrier spike.
+     Exit: the fleet spans >=2 regions, a job spreads across them, agents fail
+       over between regions, and barrier mechanics are proven in the spike.
+
+  P2 — TIGHT COUPLING + FULL DRIVER SET (core tier)
+     Ships: per-cell Raft leader · barrier/leader/message-passing drivers ·
+       checkpointing · mitosis-at-checkpoint (B3) · gang · GPU · adaptive
+       detection. Templates: dist-training, sci-sim, graph-compute, agent-sim.
+     Exit: all nine templates run on the core tier; a GPU training job completes
+       with checkpoint recovery after an induced failure; a barrier cell splits
+       cleanly at a checkpoint boundary.
+
+  P3 — OPEN / UNTRUSTED TIER
+     Ships: WASM (Wasmtime) sandbox · result verification (quorum + random
+       assignment) · reputation gating · honeypot spot-checks · anonymous
+       SPIFFE/SPIRE enrollment · workload signing.
+     Exit: untrusted machines run independent jobs; quorum rejects an injected
+       wrong result; a honeypot-caught liar is de-weighted; anonymous enrollment
+       issues a valid identity.
+
+  P4 — SCALE INFRASTRUCTURE
+     Ships: FoundationDB registry · observability aggregation (cell/region
+       rollup) · rolling upgrades by drain · backpressure / rate-limiting.
+     Exit: control plane and registry sustain target load with no single
+       bottleneck; a rolling upgrade completes with zero job loss; metric
+       cardinality stays bounded at fleet scale.
+
+  P5 — PRODUCTION READINESS / GA
+     Ships: multi-tenancy (quotas, fairness, isolation) · disaster recovery +
+       chaos testing · SLAs and alerting · optional TPM/attestation on the core
+       tier · security audit.
+     Exit: tenant quotas and fairness enforced; a DR drill recovers a lost
+       region; the security review passes; SLA targets met in staging.
+
+  P6 — SELF-TUNING + FULL-SCALE GA (full design realized)
+     Ships: signal-based adaptive mitosis (split on measured p99, the §03
+       upgrade) · capability/locality-aware placement refinement (short of a
+       solver, per §18) · reputation maturity · sustained 1M-node validation.
+     Exit: mitosis splits on a measured signal, placement honors capability and
+       locality, and a sustained run at ~1M nodes is stable. Design realized.
+
+
+===============================================================================
+Core: cells · gossip · per-cell leader · async messages
+Swarm · cell-based orchestration · design brief
+===============================================================================

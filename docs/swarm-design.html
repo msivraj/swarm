@@ -1,0 +1,1439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swarm Cell Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bg:        #F1F4F3;
+    --surface:   #FFFFFF;
+    --surface-2: #F7F9F8;
+    --ink:       #14201D;
+    --muted:     #566964;
+    --faint:     #8497914d;
+    --line:      #DCE4E1;
+    --line-2:    #C5D1CD;
+    --accent:    #0E8F84;
+    --accent-sf: #0e8f8416;
+    --plane:     #3B5B8C;
+    --plane-sf:  #3b5b8c14;
+    --good:      #2E8256;
+    --warn:      #B26F13;
+    --crit:      #BC4130;
+    --shadow:    0 1px 2px #14201d0c, 0 8px 24px -12px #14201d1f;
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --bg:        #0D1412;
+      --surface:   #141F1C;
+      --surface-2: #101917;
+      --ink:       #E7EEEB;
+      --muted:     #93A6A0;
+      --faint:     #6f857e40;
+      --line:      #243330;
+      --line-2:    #2F423D;
+      --accent:    #2ED3BE;
+      --accent-sf: #2ed3be1c;
+      --plane:     #82A6DC;
+      --plane-sf:  #82a6dc1c;
+      --good:      #4BB37C;
+      --warn:      #D69A3E;
+      --crit:      #E0715E;
+      --shadow:    0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:        #0D1412;
+    --surface:   #141F1C;
+    --surface-2: #101917;
+    --ink:       #E7EEEB;
+    --muted:     #93A6A0;
+    --faint:     #6f857e40;
+    --line:      #243330;
+    --line-2:    #2F423D;
+    --accent:    #2ED3BE;
+    --accent-sf: #2ed3be1c;
+    --plane:     #82A6DC;
+    --plane-sf:  #82a6dc1c;
+    --good:      #4BB37C;
+    --warn:      #D69A3E;
+    --crit:      #E0715E;
+    --shadow:    0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    font-size: 17px;
+    line-height: 1.62;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+  .measure { max-width: 720px; }
+
+  /* ---- Masthead ---- */
+  header.masthead {
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--surface-2), var(--bg));
+  }
+  .masthead-inner { padding: 26px 24px 22px; max-width: 1040px; margin: 0 auto;
+    display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 13px; }
+  .glyph {
+    width: 38px; height: 38px; flex: none; color: var(--accent);
+  }
+  .brand-text { display: flex; flex-direction: column; line-height: 1.1; }
+  .brand-name { font-weight: 700; font-size: 20px; letter-spacing: -0.02em; }
+  .brand-sub { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted);
+    letter-spacing: 0.02em; margin-top: 3px; }
+  .masthead-meta { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted);
+    text-align: right; line-height: 1.7; }
+  .masthead-meta b { color: var(--ink); font-weight: 600; }
+
+  /* ---- Hero ---- */
+  .hero { padding: 62px 0 30px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; font-weight: 500;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .eyebrow::before { content: ""; width: 26px; height: 1px; background: var(--accent); display: inline-block; }
+  h1 {
+    font-size: clamp(34px, 6vw, 54px); line-height: 1.02; letter-spacing: -0.035em;
+    font-weight: 700; margin: 20px 0 0; text-wrap: balance; max-width: 15ch;
+  }
+  .lede { font-size: clamp(18px, 2.4vw, 21px); color: var(--muted); margin: 22px 0 0;
+    max-width: 34ch; text-wrap: pretty; }
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  .stat-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 38px; }
+  .stat {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 20px; box-shadow: var(--shadow); flex: 1 1 150px;
+  }
+  .stat .n { font-size: 26px; font-weight: 700; letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums; }
+  .stat .n .unit { font-size: 15px; color: var(--muted); font-weight: 500; }
+  .stat .l { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.09em; margin-top: 5px; }
+
+  /* ---- Sections ---- */
+  section { padding: 40px 0; border-top: 1px solid var(--line); margin-top: 40px; }
+  .part-divider { display: flex; align-items: center; gap: 16px; margin: 58px 0 -8px; }
+  .part-divider::before, .part-divider::after { content: ""; height: 1px; background: var(--line-2); flex: 1; }
+  .part-divider span { font-family: "IBM Plex Mono", monospace; font-size: 12.5px;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+  .tag-build { color: var(--accent); font-weight: 600; }
+  .tag-reuse { color: var(--muted); }
+  .roadmap { display: flex; flex-direction: column; gap: 12px; margin-top: 22px; }
+  .phase { display: flex; gap: 16px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 13px; padding: 18px 20px; box-shadow: var(--shadow); }
+  .phase-tag { font-family: "IBM Plex Mono", monospace; font-weight: 700; color: var(--accent);
+    font-size: 15px; flex: none; min-width: 34px; padding-top: 2px; }
+  .phase-body { flex: 1; min-width: 0; }
+  .phase-body h4 { margin: 0 0 7px; font-size: 16.5px; font-weight: 600; letter-spacing: -0.01em; }
+  .phase-scope { font-family: "IBM Plex Mono", monospace; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .phase .ships { margin: 0 0 9px; font-size: 14px; color: var(--ink); line-height: 1.5; }
+  .phase .exit { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.45; }
+  .phase .exit b { color: var(--good); font-weight: 600; }
+  .sec-head { display: flex; gap: 18px; align-items: baseline; margin-bottom: 8px; }
+  .sec-num { font-family: "IBM Plex Mono", monospace; font-size: 14px; font-weight: 600;
+    color: var(--accent); flex: none; padding-top: 4px; }
+  h2 { font-size: clamp(24px, 3.6vw, 33px); letter-spacing: -0.025em; font-weight: 700;
+    margin: 0; text-wrap: balance; line-height: 1.1; }
+  h3 { font-size: 19px; letter-spacing: -0.01em; font-weight: 600; margin: 30px 0 8px; }
+  p { margin: 14px 0; }
+  .sec-body { padding-left: 0; }
+  @media (min-width: 720px) { .sec-body { padding-left: 47px; } }
+  strong { font-weight: 600; }
+  a { color: var(--accent); }
+  code, .mono { font-family: "IBM Plex Mono", monospace; font-size: 0.88em; }
+  p code, li code { background: var(--accent-sf); color: var(--ink); padding: 1px 6px;
+    border-radius: 5px; font-size: 0.83em; }
+
+  /* ---- Tension callout ---- */
+  .tension {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+    padding: 8px; box-shadow: var(--shadow); margin-top: 26px;
+    display: grid; grid-template-columns: 1fr; gap: 8px;
+  }
+  @media (min-width: 640px) { .tension { grid-template-columns: repeat(3, 1fr); } }
+  .tension-cell { padding: 20px 18px; border-radius: 11px; background: var(--surface-2); }
+  .tension-cell .k { font-family: "IBM Plex Mono", monospace; font-size: 11.5px;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); font-weight: 500; }
+  .tension-cell h4 { margin: 8px 0 6px; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  .tension-cell p { margin: 0; font-size: 14.5px; color: var(--muted); line-height: 1.5; }
+  .tension-join { text-align: center; font-family: "IBM Plex Mono", monospace; color: var(--muted);
+    font-size: 13px; margin: 18px 0 4px; }
+  .tension-join b { color: var(--crit); }
+
+  /* ---- Figures ---- */
+  figure { margin: 30px 0 8px; }
+  .figframe {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+    padding: 28px 26px 20px; box-shadow: var(--shadow); overflow-x: auto;
+  }
+  figcaption { font-size: 14px; color: var(--muted); margin-top: 14px; line-height: 1.5;
+    max-width: 68ch; }
+  figcaption b { color: var(--ink); font-weight: 600; }
+  svg { display: block; max-width: 100%; height: auto; }
+  svg text { font-family: "IBM Plex Mono", monospace; }
+
+  /* diagram tokens applied via classes */
+  .d-box  { fill: var(--surface-2); stroke: var(--line-2); stroke-width: 1.5; }
+  .d-plane{ fill: var(--plane-sf); stroke: var(--plane); stroke-width: 1.5; }
+  .d-cell { fill: var(--accent-sf); stroke: var(--accent); stroke-width: 1.5; }
+  .d-node { fill: var(--surface); stroke: var(--muted); stroke-width: 1.4; }
+  .d-lead { fill: var(--accent); stroke: var(--accent); }
+  .d-lbl  { fill: var(--ink); font-size: 13px; font-weight: 500; }
+  .d-lbl-s{ fill: var(--muted); font-size: 11.5px; }
+  .d-lbl-a{ fill: var(--accent); font-size: 11.5px; font-weight: 600; }
+  .d-lbl-p{ fill: var(--plane); font-size: 11.5px; font-weight: 600; }
+  .d-flow { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+  .d-flow-a { stroke: var(--accent); stroke-width: 1.8; fill: none; }
+  .d-dash { stroke: var(--muted); stroke-width: 1.6; fill: none; stroke-dasharray: 5 4; }
+  .d-hi   { fill: var(--ink); font-weight: 600; }
+
+  /* ---- Coupling cards ---- */
+  .spectrum-bar { height: 8px; border-radius: 4px; margin: 24px 0 4px;
+    background: linear-gradient(90deg, var(--crit), var(--warn) 50%, var(--good)); }
+  .spectrum-ends { display: flex; justify-content: space-between;
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em; }
+  .couple-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 24px; }
+  @media (min-width: 720px) { .couple-grid { grid-template-columns: repeat(3, 1fr); } }
+  .couple {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 13px;
+    padding: 20px 18px; box-shadow: var(--shadow); position: relative; overflow: hidden;
+  }
+  .couple::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+  .couple.tight::before  { background: var(--crit); }
+  .couple.mid::before    { background: var(--warn); }
+  .couple.loose::before  { background: var(--good); }
+  .couple .tag { font-family: "IBM Plex Mono", monospace; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.07em; }
+  .couple.tight .tag { color: var(--crit); }
+  .couple.mid .tag   { color: var(--warn); }
+  .couple.loose .tag { color: var(--good); }
+  .couple h4 { margin: 10px 0 2px; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  .couple .size { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--ink);
+    font-weight: 600; }
+  .couple ul { margin: 12px 0 0; padding-left: 18px; color: var(--muted); font-size: 14px; line-height: 1.55; }
+  .couple li { margin: 3px 0; }
+
+  /* ---- Manifest / code ---- */
+  .code-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 13px;
+    overflow: hidden; box-shadow: var(--shadow); margin: 22px 0;
+  }
+  .code-top { display: flex; align-items: center; gap: 8px; padding: 11px 16px;
+    border-bottom: 1px solid var(--line); background: var(--surface-2); }
+  .code-top .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line-2); }
+  .code-top .fn { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted);
+    margin-left: 6px; }
+  pre { margin: 0; padding: 18px 20px; overflow-x: auto; font-family: "IBM Plex Mono", monospace;
+    font-size: 13.5px; line-height: 1.7; color: var(--ink); }
+  .t-key { color: var(--plane); }
+  .t-val { color: var(--accent); }
+  .t-cm  { color: var(--muted); }
+
+  /* ---- Threshold table ---- */
+  .tbl-wrap { overflow-x: auto; margin: 22px 0; border: 1px solid var(--line);
+    border-radius: 13px; box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 460px; }
+  th, td { text-align: left; padding: 13px 18px; border-bottom: 1px solid var(--line); }
+  thead th { font-family: "IBM Plex Mono", monospace; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--muted); font-weight: 500; background: var(--surface-2); }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono, th.mono { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }
+  .tdesc { display: block; font-family: "IBM Plex Sans", sans-serif; font-weight: 400;
+    font-size: 12.5px; color: var(--muted); line-height: 1.42; margin-top: 5px;
+    white-space: normal; max-width: 36ch; }
+  td .chip { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px;
+    vertical-align: middle; }
+  .chip.tight { background: var(--crit); }
+  .chip.mid { background: var(--warn); }
+  .chip.loose { background: var(--good); }
+  .chip.msg { background: var(--plane); }
+  tbody tr { background: var(--surface); }
+
+  /* ---- Rules / guardrails ---- */
+  .rules { list-style: none; padding: 0; margin: 20px 0 0; display: grid; gap: 12px; }
+  .rules li { display: flex; gap: 14px; align-items: flex-start;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 11px;
+    padding: 16px 18px; box-shadow: var(--shadow); }
+  .rules .rn { font-family: "IBM Plex Mono", monospace; font-weight: 600; color: var(--accent);
+    font-size: 13px; flex: none; padding-top: 2px; min-width: 30px; }
+  .rules .rt { font-size: 15px; line-height: 1.5; }
+  .rules .rt b { font-weight: 600; }
+
+  /* ---- Don't build ---- */
+  .avoid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 22px; }
+  @media (min-width: 640px) { .avoid { grid-template-columns: repeat(3, 1fr); } }
+  .avoid-card { border: 1px solid var(--line); border-left: 3px solid var(--crit);
+    border-radius: 10px; padding: 16px 17px; background: var(--surface); box-shadow: var(--shadow); }
+  .avoid-card h4 { margin: 0 0 6px; font-size: 15.5px; font-weight: 600; }
+  .avoid-card p { margin: 0; font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+
+  /* ---- CLI ---- */
+  .cli { background: #0c1614; border: 1px solid var(--line-2); border-radius: 13px;
+    overflow: hidden; box-shadow: var(--shadow); margin: 22px 0; }
+  :root[data-theme="dark"] .cli { background: #0a100e; }
+  .cli-top { display: flex; align-items: center; gap: 7px; padding: 10px 15px;
+    border-bottom: 1px solid #ffffff14; }
+  .cli-top .d { width: 10px; height: 10px; border-radius: 50%; }
+  .cli-top .d:nth-child(1){ background:#e0715e;} .cli-top .d:nth-child(2){ background:#d69a3e;} .cli-top .d:nth-child(3){ background:#4bb37c;}
+  .cli-top .ttl { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: #7f938d; margin-left: 8px; }
+  .cli pre { color: #d7e2de; background: transparent; font-size: 13px; }
+  .cli .c-cmd { color: #2ED3BE; } .cli .c-arg { color: #d7e2de; }
+  .cli .c-flag { color: #82A6DC; } .cli .c-out { color: #7f938d; } .cli .c-p { color: #4bb37c; }
+
+  /* ---- footer ---- */
+  footer { border-top: 1px solid var(--line); margin-top: 56px; padding: 30px 0 60px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted); }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .stat, .couple { transition: transform .18s ease, box-shadow .18s ease; }
+    .stat:hover, .couple:hover { transform: translateY(-2px); }
+  }
+</style>
+</head>
+<body>
+
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand">
+      <svg class="glyph" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <circle cx="20" cy="20" r="18" stroke="currentColor" stroke-width="1.6" opacity="0.5"/>
+        <circle cx="14" cy="17" r="4.4" fill="currentColor" opacity="0.9"/>
+        <circle cx="25" cy="15" r="3.2" fill="currentColor" opacity="0.55"/>
+        <circle cx="23" cy="26" r="5" fill="currentColor"/>
+        <path d="M18 18.5 L21.5 24" stroke="currentColor" stroke-width="1.4" opacity="0.6"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">Swarm</span>
+        <span class="brand-sub">forge/swarm · design brief</span>
+      </div>
+    </div>
+    <div class="masthead-meta">
+      <div>cell-based orchestration</div>
+      <div><b>2 → 1,000,000</b> machines</div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero measure">
+    <div class="eyebrow">Architecture Design</div>
+    <h1>A fleet that divides instead of resizing.</h1>
+    <p class="lede">Orchestrate <b>2 to a million</b> tightly-coupled machines by confining coordination to bounded <b>cells</b> that split and merge as the swarm grows &mdash; no global optimizer, no global consensus.</p>
+    <div class="stat-row">
+      <div class="stat"><div class="n">1<span class="unit">M</span></div><div class="l">target fleet size</div></div>
+      <div class="stat"><div class="n">O(1)<span class="unit"></span></div><div class="l">coord cost / node</div></div>
+      <div class="stat"><div class="n">2&times;<span class="unit"></span></div><div class="l">split / merge band</div></div>
+      <div class="stat"><div class="n">1<span class="unit"> field</span></div><div class="l">drives placement</div></div>
+    </div>
+  </div>
+
+  <!-- 01 THE TENSION -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>The requirement that forces the whole design</h2></div>
+    <div class="sec-body">
+      <p class="measure">The brief asks for three things at once: machines that are <strong>tightly coupled</strong>, a fleet that scales <strong>toward one million</strong>, and dispatch that stays <strong>low latency</strong>. Taken literally and flat, that trio is not buildable &mdash; each pair fights the third.</p>
+
+      <div class="tension">
+        <div class="tension-cell">
+          <div class="k">Constraint A</div>
+          <h4>Tight coupling</h4>
+          <p>Machines share state, barriers, or a leader. Coordination has a real per-link cost.</p>
+        </div>
+        <div class="tension-cell">
+          <div class="k">Constraint B</div>
+          <h4>Scale to 1M</h4>
+          <p>All-to-all is O(N²) &mdash; a million nodes is 10¹² links. Global consensus caps at ~5&ndash;7 voters.</p>
+        </div>
+        <div class="tension-cell">
+          <div class="k">Constraint C</div>
+          <h4>Low latency</h4>
+          <p>Coordinated global decisions can't also be fast. The speed of light is the ceiling.</p>
+        </div>
+      </div>
+      <p class="tension-join">A + B + C, applied to one flat topology &rarr; <b>impossible</b></p>
+
+      <p class="measure">The escape hatch every large tightly-coupled system reaches for is the same: <strong>confine the tight coupling to bounded groups, and make the groups loosely coupled to each other.</strong> Those groups are cells. Tight coupling lives <em>inside</em> a cell; cells barely talk. Growing from ten thousand machines to a million just means <strong>more cells</strong> &mdash; coordination cost per node stays flat. Everything below follows from that one move.</p>
+    </div>
+  </section>
+
+  <!-- 02 TOPOLOGY -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>Topology</h2></div>
+    <div class="sec-body">
+      <p class="measure">Four parts, and only four: a <strong>control plane</strong> that plans work, <strong>cells</strong> that run it, <strong>gossip</strong> for membership and health inside each cell, and <strong>async messages</strong> between cells. That is the irreducible core &mdash; nothing else is required to hit the requirements.</p>
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 470" role="img" aria-label="Control plane at top routes tasks down to three cells; each cell contains a leader node and worker nodes coordinated by gossip; cells exchange async messages with each other.">
+            <defs>
+              <marker id="arw" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+              </marker>
+              <marker id="arwa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0 0 L10 5 L0 10 z" fill="var(--plane)"/>
+              </marker>
+            </defs>
+
+            <!-- control plane -->
+            <rect class="d-plane" x="150" y="20" width="600" height="70" rx="12"/>
+            <text class="d-lbl" x="450" y="49" text-anchor="middle" font-weight="600">CONTROL PLANE</text>
+            <text class="d-lbl-s" x="450" y="69" text-anchor="middle">Planner · Scheduler · Cell registry</text>
+
+            <!-- routing arrows -->
+            <path class="d-flow-a" d="M280 90 L200 150" marker-end="url(#arwa)"/>
+            <path class="d-flow-a" d="M450 90 L450 150" marker-end="url(#arwa)"/>
+            <path class="d-flow-a" d="M620 90 L700 150" marker-end="url(#arwa)"/>
+            <text class="d-lbl-p" x="330" y="122" text-anchor="middle">routes tasks</text>
+
+            <!-- cells -->
+            <!-- cell A -->
+            <g>
+              <rect class="d-cell" x="60" y="155" width="230" height="150" rx="14"/>
+              <text class="d-lbl-a" x="75" y="178">CELL · a1</text>
+              <circle class="d-lead" cx="115" cy="235" r="13"/>
+              <text x="115" y="239" text-anchor="middle" fill="var(--surface)" font-size="11" font-weight="600">L</text>
+              <text class="d-lbl-s" x="115" y="266" text-anchor="middle">leader</text>
+              <circle class="d-node" cx="175" cy="212" r="9"/>
+              <circle class="d-node" cx="215" cy="230" r="9"/>
+              <circle class="d-node" cx="180" cy="258" r="9"/>
+              <circle class="d-node" cx="225" cy="268" r="9"/>
+              <text class="d-lbl-s" x="205" y="296" text-anchor="middle">gossip: membership + health</text>
+            </g>
+            <!-- cell B -->
+            <g>
+              <rect class="d-cell" x="335" y="155" width="230" height="150" rx="14"/>
+              <text class="d-lbl-a" x="350" y="178">CELL · b7</text>
+              <circle class="d-lead" cx="390" cy="235" r="13"/>
+              <text x="390" y="239" text-anchor="middle" fill="var(--surface)" font-size="11" font-weight="600">L</text>
+              <circle class="d-node" cx="450" cy="212" r="9"/>
+              <circle class="d-node" cx="490" cy="230" r="9"/>
+              <circle class="d-node" cx="455" cy="258" r="9"/>
+              <circle class="d-node" cx="500" cy="268" r="9"/>
+              <circle class="d-node" cx="520" cy="220" r="9"/>
+            </g>
+            <!-- cell C -->
+            <g>
+              <rect class="d-cell" x="610" y="155" width="230" height="150" rx="14"/>
+              <text class="d-lbl-a" x="625" y="178">CELL · c3</text>
+              <circle class="d-lead" cx="665" cy="235" r="13"/>
+              <text x="665" y="239" text-anchor="middle" fill="var(--surface)" font-size="11" font-weight="600">L</text>
+              <circle class="d-node" cx="725" cy="212" r="9"/>
+              <circle class="d-node" cx="765" cy="230" r="9"/>
+              <circle class="d-node" cx="730" cy="258" r="9"/>
+              <circle class="d-node" cx="775" cy="268" r="9"/>
+            </g>
+
+            <!-- inter-cell async messages -->
+            <path class="d-dash" d="M290 355 L335 355" marker-end="url(#arw)" marker-start="url(#arw)"/>
+            <path class="d-dash" d="M565 355 L610 355" marker-end="url(#arw)" marker-start="url(#arw)"/>
+            <line class="d-dash" x1="175" y1="305" x2="175" y2="355"/>
+            <line class="d-dash" x1="450" y1="305" x2="450" y2="355"/>
+            <line class="d-dash" x1="725" y1="305" x2="725" y2="355"/>
+            <line class="d-dash" x1="175" y1="355" x2="725" y2="355"/>
+            <rect x="360" y="342" width="180" height="26" rx="6" fill="var(--surface)"/>
+            <text class="d-lbl-s" x="450" y="359" text-anchor="middle">async messages (loose)</text>
+          </svg>
+        </div>
+        <figcaption><b>Tight coupling is contained; loose coupling spans the fleet.</b> Inside a cell, a Raft-elected leader coordinates workers and gossip (SWIM) tracks who is alive. Between cells there is only asynchronous message passing &mdash; the boundary that keeps the coordination bill flat as cells multiply.</figcaption>
+      </figure>
+
+      <h3>Why gossip inside, a planner on top</h3>
+      <p class="measure">Gossip &mdash; specifically <strong>SWIM</strong>, the protocol behind Serf, Consul, and Cassandra &mdash; is genuinely fast and carries <em>constant</em> per-node overhead, but only for the job it's good at: membership, failure detection, and spreading capacity metadata. A new machine joins the swarm by gossiping itself in; no central registration bottleneck. That is your dynamic scaling at the membership layer.</p>
+      <p class="measure">What gossip must <em>not</em> own is authoritative task assignment. Tight coordination needs someone to decide &mdash; a barrier to release, a leader to elect &mdash; so the queue is fed by a <strong>planner</strong>: submitters hand in high-level jobs, the planner decomposes them into tasks and routes them to the right cell, and workers <strong>pull</strong>. Centralized planning, decentralized dispatch &mdash; the hot path has no central bottleneck.</p>
+    </div>
+  </section>
+
+  <!-- 03 MITOSIS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>Mitosis &mdash; how cells scale</h2></div>
+    <div class="sec-body">
+      <p class="measure">Cells do not continuously resize to chase an optimum. Rebalancing a tightly-coupled cell means tearing down and rebuilding its coordination state &mdash; the single most expensive operation in the system &mdash; so you do it rarely, and only at thresholds. A cell has a target size <code>T</code>; it <strong>splits</strong> when it grows past <code>2T</code> and two neighbors <strong>merge</strong> when together they fall below <code>T</code>. The gap between those two triggers is a 2× hysteresis band, wide enough that a freshly-split cell can never immediately re-merge.</p>
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 360" role="img" aria-label="Top row: an overfull cell with size greater than 2T splits into two cells of about T each. Bottom row: two cells whose combined size is below T merge into one cell of at most T. The stable zone is between T and 2T.">
+            <defs>
+              <marker id="arw2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+                <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+              </marker>
+            </defs>
+
+            <!-- SPLIT row -->
+            <text class="d-lbl-a" x="40" y="42" font-size="12">SPLIT</text>
+            <line x1="40" y1="52" x2="40" y2="150" stroke="var(--accent)" stroke-width="2"/>
+
+            <!-- overfull cell -->
+            <rect x="80" y="45" width="150" height="118" rx="13" fill="var(--crit)" opacity="0.09"/>
+            <rect x="80" y="45" width="150" height="118" rx="13" fill="none" stroke="var(--crit)" stroke-width="1.6"/>
+            <text x="155" y="66" text-anchor="middle" fill="var(--crit)" font-size="11.5" font-weight="600">size &gt; 2T</text>
+            <g fill="var(--crit)" opacity="0.85">
+              <circle cx="108" cy="90" r="6"/><circle cx="128" cy="88" r="6"/><circle cx="148" cy="92" r="6"/>
+              <circle cx="168" cy="88" r="6"/><circle cx="188" cy="92" r="6"/><circle cx="205" cy="98" r="6"/>
+              <circle cx="112" cy="112" r="6"/><circle cx="132" cy="110" r="6"/><circle cx="152" cy="114" r="6"/>
+              <circle cx="172" cy="110" r="6"/><circle cx="192" cy="114" r="6"/>
+              <circle cx="120" cy="134" r="6"/><circle cx="140" cy="132" r="6"/><circle cx="160" cy="136" r="6"/><circle cx="180" cy="133" r="6"/>
+            </g>
+
+            <path class="d-flow-a" d="M240 104 L310 104" marker-end="url(#arw2)"/>
+            <text class="d-lbl-a" x="275" y="94" text-anchor="middle">divide</text>
+
+            <!-- two ~T cells -->
+            <rect x="325" y="52" width="120" height="104" rx="12" class="d-cell"/>
+            <text x="385" y="72" text-anchor="middle" class="d-lbl-a" font-size="11.5">~ T</text>
+            <g fill="var(--accent)"><circle cx="352" cy="96" r="5.5"/><circle cx="372" cy="94" r="5.5"/><circle cx="392" cy="98" r="5.5"/><circle cx="360" cy="118" r="5.5"/><circle cx="382" cy="116" r="5.5"/><circle cx="404" cy="112" r="5.5"/><circle cx="412" cy="98" r="5.5"/></g>
+            <rect x="460" y="52" width="120" height="104" rx="12" class="d-cell"/>
+            <text x="520" y="72" text-anchor="middle" class="d-lbl-a" font-size="11.5">~ T</text>
+            <g fill="var(--accent)"><circle cx="487" cy="96" r="5.5"/><circle cx="507" cy="94" r="5.5"/><circle cx="527" cy="98" r="5.5"/><circle cx="495" cy="118" r="5.5"/><circle cx="517" cy="116" r="5.5"/><circle cx="539" cy="112" r="5.5"/><circle cx="547" cy="98" r="5.5"/></g>
+
+            <!-- divider -->
+            <line x1="40" y1="200" x2="860" y2="200" stroke="var(--line)" stroke-width="1"/>
+
+            <!-- MERGE row -->
+            <text class="d-lbl-a" x="40" y="238" font-size="12">MERGE</text>
+            <line x1="40" y1="248" x2="40" y2="326" stroke="var(--accent)" stroke-width="2"/>
+
+            <rect x="80" y="240" width="115" height="92" rx="12" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 3"/>
+            <text x="137" y="259" text-anchor="middle" class="d-lbl-s">&lt; T combined</text>
+            <g fill="var(--muted)"><circle cx="108" cy="288" r="5.5"/><circle cx="128" cy="292" r="5.5"/><circle cx="148" cy="286" r="5.5"/></g>
+            <rect x="205" y="240" width="115" height="92" rx="12" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 3"/>
+            <g fill="var(--muted)"><circle cx="235" cy="288" r="5.5"/><circle cx="255" cy="292" r="5.5"/><circle cx="275" cy="286" r="5.5"/></g>
+
+            <path class="d-flow-a" d="M330 286 L400 286" marker-end="url(#arw2)"/>
+            <text class="d-lbl-a" x="365" y="276" text-anchor="middle">absorb</text>
+
+            <rect x="415" y="246" width="140" height="80" rx="12" class="d-cell"/>
+            <text x="485" y="266" text-anchor="middle" class="d-lbl-a" font-size="11.5">&le; T</text>
+            <g fill="var(--accent)"><circle cx="445" cy="298" r="5.5"/><circle cx="465" cy="302" r="5.5"/><circle cx="485" cy="296" r="5.5"/><circle cx="505" cy="300" r="5.5"/><circle cx="525" cy="296" r="5.5"/></g>
+
+            <!-- stable zone note -->
+            <rect x="620" y="235" width="240" height="98" rx="12" fill="var(--surface-2)" stroke="var(--line-2)" stroke-width="1.2"/>
+            <text x="640" y="262" class="d-lbl" font-size="12.5" font-weight="600">Stable zone</text>
+            <text x="640" y="286" class="d-lbl-s">T &le; size &le; 2T</text>
+            <text x="640" y="306" class="d-lbl-s">do nothing.</text>
+            <text x="640" y="322" class="d-lbl-s">+ cooldown · sustained-window</text>
+          </svg>
+        </div>
+        <figcaption><b>Split at 2T, merge below T &mdash; the 2× gap is what stops thrashing.</b> A cell that just split sits at ~T, far from the merge trigger, so it can't oscillate. Two guardrails harden it further: a <b>cooldown</b> (no split/merge on the same cell within minutes) and a <b>sustained-window</b> check so a momentary burst of joins doesn't trigger a needless split.</figcaption>
+      </figure>
+
+      <h3>Starting thresholds</h3>
+      <p class="measure">Size <code>T</code> off the coupling tightness &mdash; the tighter the coordination, the smaller the cell, because barrier latency grows with N and the slowest member gates everyone. Begin with counts; once running, graduate the trigger from a <em>count</em> to a <em>measured</em> signal (e.g. split when the cell's barrier-completion p99 crosses your latency SLO).</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Coupling</th><th class="mono">Target&nbsp;T</th><th class="mono">Split&nbsp;&gt;</th><th>Cell character</th></tr></thead>
+          <tbody>
+            <tr><td><span class="chip tight"></span>Barrier / lockstep</td><td class="mono">64&ndash;128</td><td class="mono">128&ndash;256</td><td>small, one rack/AZ</td></tr>
+            <tr><td><span class="chip mid"></span>Leader-driven</td><td class="mono">~1,000</td><td class="mono">2,000</td><td>medium</td></tr>
+            <tr><td><span class="chip loose"></span>Message-passing</td><td class="mono">few&times;10³</td><td class="mono">2&times; that</td><td>large</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <ul class="rules">
+        <li><span class="rn">R1</span><span class="rt"><b>Resize only at task boundaries.</b> A machine mid-barrier is a member of the barrier group &mdash; yanking it corrupts the computation. Splits and merges wait for a safe point, and the leader coordinates the membership change as an explicit step.</span></li>
+        <li><span class="rn">R2</span><span class="rt"><b>New joins fill, then divide.</b> Machines gossip in and land in cells until one crosses 2T and splits. That <em>is</em> the dynamic scaling &mdash; no global optimizer chasing "optimum."</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 04 COUPLING -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>The job declares its own coupling</h2></div>
+    <div class="sec-body">
+      <p class="measure">Coupling isn't a global mode &mdash; it's a per-job property the submitter declares, exactly like Slurm's MPI job type, Volcano's gang scheduling, or AWS placement groups. One field in the manifest becomes the single input that dials cell size, placement locality, resize-safety, and admission policy all at once.</p>
+
+      <div class="spectrum-bar" aria-hidden="true"></div>
+      <div class="spectrum-ends"><span>&larr; tightest</span><span>loosest &rarr;</span></div>
+
+      <div class="couple-grid">
+        <div class="couple tight">
+          <div class="tag">barrier</div>
+          <h4>Lockstep</h4>
+          <div class="size">small cells · gang</div>
+          <ul>
+            <li>Synchronous ML (all-reduce SGD)</li>
+            <li>CFD / climate simulation</li>
+            <li>BSP graph (Pregel supersteps)</li>
+            <li>Classic MPI / HPC</li>
+          </ul>
+        </div>
+        <div class="couple mid">
+          <div class="tag">message-passing</div>
+          <h4>Chatty, not blocking</h4>
+          <div class="size">medium cells</div>
+          <ul>
+            <li>Actor systems</li>
+            <li>Async / Hogwild ML + param server</li>
+            <li>Streaming pipelines</li>
+          </ul>
+        </div>
+        <div class="couple loose">
+          <div class="tag">independent</div>
+          <h4>Embarrassingly parallel</h4>
+          <div class="size">large cells · spray</div>
+          <ul>
+            <li>Frame rendering</li>
+            <li>Map-reduce map phase</li>
+            <li>Monte Carlo sampling</li>
+            <li>Parameter sweeps</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>What the submitter writes</h3>
+      <div class="code-card">
+        <div class="code-top"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="fn">job.yaml</span></div>
+<pre><span class="t-key">coupling</span>: <span class="t-val">barrier</span>          <span class="t-cm"># independent | message-passing | leader | barrier</span>
+<span class="t-key">min_members</span>: <span class="t-val">128</span>          <span class="t-cm"># gang size — all-or-nothing admission</span>
+<span class="t-key">locality</span>: <span class="t-val">same-az</span>          <span class="t-cm"># affinity hint for tight jobs</span></pre>
+      </div>
+
+      <h3>How the planner reads it</h3>
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 330" role="img" aria-label="A job submitted from the CLI reaches the planner, which reads the coupling field. A barrier job is placed all-or-nothing into a small AZ-local cell and gang-scheduled. An independent job is sprayed across any cells with capacity, where workers pull tasks.">
+            <defs>
+              <marker id="arw3" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+                <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+              </marker>
+              <marker id="arw3c" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+                <path d="M0 0 L10 5 L0 10 z" fill="var(--crit)"/>
+              </marker>
+              <marker id="arw3g" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+                <path d="M0 0 L10 5 L0 10 z" fill="var(--good)"/>
+              </marker>
+            </defs>
+
+            <!-- CLI -->
+            <rect class="d-box" x="30" y="130" width="120" height="60" rx="10"/>
+            <text class="d-lbl" x="90" y="156" text-anchor="middle" font-weight="600">CLI</text>
+            <text class="d-lbl-s" x="90" y="174" text-anchor="middle">swarm submit</text>
+
+            <path class="d-flow" d="M150 160 L215 160" marker-end="url(#arw3)"/>
+
+            <!-- Planner -->
+            <rect class="d-plane" x="220" y="120" width="150" height="80" rx="11"/>
+            <text class="d-lbl" x="295" y="150" text-anchor="middle" font-weight="600">PLANNER</text>
+            <text class="d-lbl-p" x="295" y="170" text-anchor="middle">reads coupling</text>
+            <text class="d-lbl-p" x="295" y="186" text-anchor="middle">checks min_members</text>
+
+            <!-- branch: barrier -->
+            <path d="M370 145 C 420 145, 430 70, 480 70" class="d-flow" stroke="var(--crit)" marker-end="url(#arw3c)"/>
+            <text x="430" y="58" text-anchor="middle" fill="var(--crit)" font-size="11" font-weight="600">coupling: barrier</text>
+            <rect x="485" y="38" width="380" height="66" rx="11" fill="none" stroke="var(--crit)" stroke-width="1.5"/>
+            <text x="505" y="63" fill="var(--crit)" font-size="12" font-weight="600">Small AZ-local cell · GANG</text>
+            <text class="d-lbl-s" x="505" y="83" font-size="11">all-or-nothing: 128 slots free, or don't start</text>
+            <g fill="var(--crit)"><circle cx="800" cy="60" r="5"/><circle cx="818" cy="66" r="5"/><circle cx="836" cy="58" r="5"/><circle cx="818" cy="50" r="5"/></g>
+
+            <!-- branch: independent -->
+            <path d="M370 175 C 420 175, 430 250, 480 250" class="d-flow" stroke="var(--good)" marker-end="url(#arw3g)"/>
+            <text x="430" y="272" text-anchor="middle" fill="var(--good)" font-size="11" font-weight="600">coupling: independent</text>
+            <rect x="485" y="220" width="380" height="66" rx="11" fill="none" stroke="var(--good)" stroke-width="1.5"/>
+            <text x="505" y="245" fill="var(--good)" font-size="12" font-weight="600">Spray across any cells · workers PULL</text>
+            <text class="d-lbl-s" x="505" y="265" font-size="11">fill wherever capacity exists · freely preemptible</text>
+            <g fill="var(--good)"><circle cx="805" cy="242" r="5"/><circle cx="828" cy="242" r="5"/><circle cx="851" cy="242" r="5"/></g>
+          </svg>
+        </div>
+        <figcaption><b>One field, three downstream decisions.</b> The coupling declaration routes placement (tight jobs into small, low-latency, AZ-local cells; loose jobs sprayed anywhere), sets resize-safety (barrier jobs are frozen against mid-flight resize), and sets admission &mdash; a <b>gang</b> job must be placed all-or-nothing, or its started half deadlock waiting on peers that were never scheduled.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 05 DRIVERS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>Substrate stays fixed; the driver plugs in per job</h2></div>
+    <div class="sec-body">
+      <p class="measure">The flavor of coordination belongs to the <em>job</em>, not the platform &mdash; a Monte Carlo run shares nothing, training needs a barrier, a graph job wants supersteps. So a cell isn't born with a personality. Every cell runs the same <strong>permanent substrate</strong>; what the leader actually executes is a <strong>coordination driver loaded from the job's <code>coupling</code> field</strong> for that job's lifetime. The cell is the room; the job brings its own coordination style and packs it up when it leaves.</p>
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 300" role="img" aria-label="The job's coupling field selects one of four coordination drivers, which loads into a cell's driver slot. Below the slot the permanent substrate — the Raft leader, gossip membership, and worker pool — is the same for every job.">
+            <defs>
+              <marker id="arwd" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+                <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+              </marker>
+            </defs>
+            <text class="d-lbl-s" x="135" y="42" text-anchor="middle">job.coupling</text>
+            <rect class="d-box" x="40" y="58" width="190" height="42" rx="9"/>
+            <text class="d-lbl-s" x="135" y="84" text-anchor="middle">independent · default</text>
+            <rect x="40" y="110" width="190" height="42" rx="9" fill="var(--accent-sf)" stroke="var(--accent)" stroke-width="2"/>
+            <text class="d-lbl-a" x="135" y="136" text-anchor="middle" font-size="13">barrier</text>
+            <rect class="d-box" x="40" y="162" width="190" height="42" rx="9"/>
+            <text class="d-lbl-s" x="135" y="188" text-anchor="middle">leader</text>
+            <rect class="d-box" x="40" y="214" width="190" height="42" rx="9"/>
+            <text class="d-lbl-s" x="135" y="240" text-anchor="middle">message-passing</text>
+
+            <path class="d-flow-a" d="M230 131 C 330 131, 370 107, 474 107" marker-end="url(#arwd)"/>
+            <text class="d-lbl-a" x="360" y="97" text-anchor="middle">selects driver</text>
+
+            <rect class="d-cell" x="480" y="48" width="360" height="212" rx="14"/>
+            <text class="d-lbl-a" x="500" y="72">CELL</text>
+            <rect x="504" y="82" width="312" height="52" rx="10" fill="var(--accent-sf)" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="6 4"/>
+            <text class="d-lbl-a" x="660" y="105" text-anchor="middle" font-size="12">COORDINATION DRIVER</text>
+            <text class="d-lbl-s" x="660" y="122" text-anchor="middle">barrier · loaded per job</text>
+            <rect class="d-box" x="504" y="144" width="312" height="42" rx="9"/>
+            <text class="d-lbl" x="660" y="170" text-anchor="middle">Raft leader</text>
+            <rect class="d-box" x="504" y="196" width="312" height="52" rx="9"/>
+            <text class="d-lbl" x="660" y="217" text-anchor="middle">Gossip membership · worker pool</text>
+            <text class="d-lbl-s" x="660" y="236" text-anchor="middle">permanent substrate</text>
+          </svg>
+        </div>
+        <figcaption><b>The cell is generic; the job supplies its coordination.</b> Gossip, the Raft leader, and the worker pool are identical in every cell. The <code>coupling</code> field selects one of four drivers, which the leader loads for the job's lifetime and unloads when it finishes &mdash; so the same cell can run training today and a render tomorrow.</figcaption>
+      </figure>
+
+      <p class="measure">The four drivers differ most in the two things that actually constrain a design: <strong>what a failure costs</strong> and <strong>how big the cell can get</strong>. That pairing is really what a job is choosing between.</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Driver</th><th>What the leader runs</th><th>Failure cost</th><th class="mono">Cell size</th><th>Resize</th></tr></thead>
+          <tbody>
+            <tr><td><span class="chip loose"></span>independent</td><td>nothing — a pull queue</td><td>trivial · re-queue task</td><td class="mono">large · 1000s</td><td>any time</td></tr>
+            <tr><td><span class="chip tight"></span>barrier</td><td>gate each step · all-reduce</td><td>high · checkpoint restart</td><td class="mono">small · 10s–100s</td><td>checkpoint only</td></tr>
+            <tr><td><span class="chip mid"></span>leader</td><td>assign rounds · hold state</td><td>moderate · re-elect leader</td><td class="mono">medium · ~1000s</td><td>between rounds</td></tr>
+            <tr><td><span class="chip msg"></span>message-passing</td><td>route mailboxes</td><td>low · restart one actor</td><td class="mono">large · 1000s</td><td>any time</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <ul class="rules">
+        <li><span class="rn">R3</span><span class="rt"><b>Unspecified coupling defaults to independent.</b> The safe floor &mdash; no coordination, can't deadlock, trivial recovery, resizes freely. Users opt into the tighter drivers explicitly.</span></li>
+        <li><span class="rn">R4</span><span class="rt"><b>Tightly-coupled jobs get dedicated cells.</b> A cell runs one flavor at a time, so its leader never juggles a barrier for job A and a router for job B. The gang reserves the cell for its lifetime; independent jobs, needing no driver, share cells freely.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 06 LIBRARY -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>The v1 task library</h2></div>
+    <div class="sec-body">
+      <p class="measure">A built-in task isn't a demo &mdash; it's the on-ramp. Each template bundles a driver plus sensible defaults (<span class="mono">min_members</span>, locality, how to split the work, how to merge results), so a user runs <code>swarm run monte-carlo --samples 1e12</code> without ever thinking about cells. The v1 suite spans all four drivers, so the library doubles as proof every mode works.</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Template</th><th>Driver</th><th class="mono">min_members</th><th>Split by</th><th>Merge</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">decrypt<span class="tdesc">Recover a key or plaintext from known ciphertext by testing candidate keys across a range.</span></td><td><span class="chip loose"></span>independent</td><td class="mono">1</td><td>keyspace range</td><td>first-hit</td></tr>
+            <tr><td class="mono">brute-force<span class="tdesc">Find an unknown input — password, hash preimage — by trying candidates from a wordlist or mask.</span></td><td><span class="chip loose"></span>independent</td><td class="mono">1</td><td>candidate space · wordlist / mask</td><td>first-hit</td></tr>
+            <tr><td class="mono">monte-carlo<span class="tdesc">Estimate a result from a huge number of independent random samples, then aggregate — pricing, risk, physics.</span></td><td><span class="chip loose"></span>independent</td><td class="mono">1</td><td>seed / sample block</td><td>sum · statistics</td></tr>
+            <tr><td class="mono">batch-render<span class="tdesc">Produce many independent outputs — 3D frames, ray-traced tiles, video segments — then reassemble.</span></td><td><span class="chip loose"></span>independent</td><td class="mono">1</td><td>frame / tile / segment</td><td>reassemble</td></tr>
+            <tr><td class="mono">param-sweep<span class="tdesc">Run one program across a grid of configurations — hyperparameter search, ablations, tuning.</span></td><td><span class="chip loose"></span>independent</td><td class="mono">1</td><td>config point</td><td>rank · collect</td></tr>
+            <tr><td class="mono">dist-training<span class="tdesc">Train one model across machines, averaging gradients every step (synchronous SGD / all-reduce).</span></td><td><span class="chip tight"></span>barrier</td><td class="mono">8+</td><td>data shard</td><td>all-reduce gradients</td></tr>
+            <tr><td class="mono">sci-sim<span class="tdesc">Simulate a physical system on a decomposed grid, exchanging boundaries each timestep — CFD, climate, N-body.</span></td><td><span class="chip tight"></span>barrier</td><td class="mono">8+</td><td>spatial domain</td><td>boundary exchange</td></tr>
+            <tr><td class="mono">agent-sim<span class="tdesc">Simulate many autonomous agents that message their neighbors — epidemiology, traffic, markets.</span></td><td><span class="chip msg"></span>message-passing</td><td class="mono">4+</td><td>agent partition</td><td>aggregate state</td></tr>
+            <tr><td class="mono">graph-compute<span class="tdesc">Run graph algorithms — PageRank, shortest paths, community detection — in coordinated supersteps.</span></td><td><span class="chip mid"></span>leader</td><td class="mono">4+</td><td>vertex partition</td><td>superstep combine</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="measure">Because the default is <code>independent</code>, five of the nine need no coordination at all &mdash; the bread-and-butter, where most users start. <code>decrypt</code> and <code>brute-force</code> stay separate: they share the driver but split work differently (a keyspace range vs. a wordlist/mask candidate space) and are documented around the legitimate uses &mdash; key recovery, password auditing, cipher benchmarking. The two <span class="mono">barrier</span> templates are the flagship HPC workloads; <code>agent-sim</code> and <code>graph-compute</code> exercise the remaining two drivers so nothing ships untested.</p>
+    </div>
+  </section>
+
+  <!-- 07 BARRIER DEEP DIVE -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h2>Cell internals: the <code>barrier</code> driver</h2></div>
+    <div class="sec-body">
+      <p class="measure">Barrier is the hardest driver and the one the flagship workloads (<code>dist-training</code>, <code>sci-sim</code>) depend on, so it's the reference protocol. A barrier cell runs the same substrate as any other &mdash; gossip, a Raft leader, a worker pool &mdash; but its leader loads a <strong>barrier coordinator</strong> that marches every worker through one strict lockstep loop and owns the checkpoint that makes failure survivable.</p>
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 330" role="img" aria-label="A barrier job's step loop: each worker computes step N on its own shard, all wait at a barrier, results are all-reduced into shared data, then the job advances to step N plus one. Every K steps the shard state is checkpointed. If a member is lost the step is invalid and the job rolls back to the last checkpoint and resumes.">
+            <defs>
+              <marker id="bm" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+              <marker id="ba" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+              <marker id="bc" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--crit)"/></marker>
+            </defs>
+
+            <path d="M760 62 C 760 18, 124 18, 124 62" class="d-flow" marker-end="url(#bm)"/>
+            <text class="d-lbl-s" x="442" y="15" text-anchor="middle">advance to step N+1</text>
+
+            <rect class="d-box" x="36" y="62" width="176" height="60" rx="11"/>
+            <text class="d-lbl" x="124" y="88" text-anchor="middle" font-weight="600">COMPUTE</text>
+            <text class="d-lbl-s" x="124" y="106" text-anchor="middle">step N on own shard</text>
+
+            <rect x="248" y="62" width="176" height="60" rx="11" fill="var(--accent-sf)" stroke="var(--accent)" stroke-width="2"/>
+            <text class="d-lbl-a" x="336" y="88" text-anchor="middle" font-weight="600" font-size="13">BARRIER</text>
+            <text class="d-lbl-s" x="336" y="106" text-anchor="middle">wait for all done</text>
+
+            <rect class="d-box" x="460" y="62" width="176" height="60" rx="11"/>
+            <text class="d-lbl" x="548" y="88" text-anchor="middle" font-weight="600">ALL-REDUCE</text>
+            <text class="d-lbl-s" x="548" y="106" text-anchor="middle">combine shared data</text>
+
+            <rect class="d-box" x="672" y="62" width="176" height="60" rx="11"/>
+            <text class="d-lbl" x="760" y="88" text-anchor="middle" font-weight="600">ADVANCE</text>
+            <text class="d-lbl-s" x="760" y="106" text-anchor="middle">release step N+1</text>
+
+            <path class="d-flow-a" d="M212 92 L244 92" marker-end="url(#ba)"/>
+            <path class="d-flow" d="M424 92 L456 92" marker-end="url(#bm)"/>
+            <path class="d-flow" d="M636 92 L668 92" marker-end="url(#bm)"/>
+
+            <path class="d-flow-a" d="M760 122 L744 206" marker-end="url(#ba)"/>
+            <text class="d-lbl-s" x="775" y="168" text-anchor="start">every K steps</text>
+            <rect x="632" y="210" width="216" height="58" rx="11" fill="var(--accent-sf)" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="6 4"/>
+            <text class="d-lbl-a" x="740" y="234" text-anchor="middle" font-size="12">CHECKPOINT</text>
+            <text class="d-lbl-s" x="740" y="252" text-anchor="middle">persist shard state</text>
+
+            <path d="M336 122 L336 206" class="d-flow" stroke="var(--crit)" marker-end="url(#bc)"/>
+            <text x="348" y="158" text-anchor="start" fill="var(--crit)" font-size="11" font-weight="600">member lost</text>
+            <text x="348" y="174" text-anchor="start" fill="var(--crit)" font-size="11">step invalid</text>
+            <rect x="248" y="210" width="176" height="58" rx="11" fill="none" stroke="var(--crit)" stroke-width="1.6"/>
+            <text x="336" y="234" text-anchor="middle" fill="var(--crit)" font-size="12" font-weight="600">RESTORE</text>
+            <text class="d-lbl-s" x="336" y="252" text-anchor="middle">roll back</text>
+
+            <path d="M632 239 L428 239" class="d-dash" marker-end="url(#bm)"/>
+            <text class="d-lbl-s" x="530" y="230" text-anchor="middle">last good state</text>
+
+            <path class="d-flow" d="M248 239 C 150 239, 124 180, 124 126" marker-end="url(#bm)"/>
+            <text class="d-lbl-s" x="150" y="205" text-anchor="start">resume</text>
+          </svg>
+        </div>
+        <figcaption><b>Every step is the same four beats, and one checkpoint is the whole safety net.</b> The barrier (accent) is the defining hop &mdash; the moment the fast workers stop and wait for the slowest. The red edge is the only failure story a barrier job has: a lost member invalidates the in-flight step, so there is nowhere to resume but the last checkpoint.</figcaption>
+      </figure>
+
+      <h3>The step loop</h3>
+      <p class="measure">The coordinator drives one iteration at a time. Every worker computes step N on its own data shard, then reports <em>done</em> plus its partial result. The coordinator holds the release until the <strong>last</strong> worker checks in, all-reduces the partials into the shared data (averaged gradients, exchanged boundaries), and only then releases everyone into step N+1. Nothing races ahead; the whole cell is always on the same step number. Every K steps it pauses to persist shard state to durable storage.</p>
+
+      <h3>The straggler is the tax you always pay</h3>
+      <p class="measure">Because the barrier waits for the slowest, one slow machine slows the entire cell <em>every step</em> &mdash; this is the reason barrier cells stay small (the more members, the higher the odds one is slow, and the longer the tail). The coordinator sets a <strong>per-step deadline</strong>: a worker that misses it isn't waited on indefinitely, it's declared dead by gossip and handled as a failure. That converts an unbounded hang into a bounded, recoverable event.</p>
+
+      <h3>Failure and recovery</h3>
+      <p class="measure">A worker lost mid-step makes that step's partial results incomplete, so the step is <strong>invalid</strong> &mdash; there is no partial-credit in lockstep. Recovery is always the same: restore the last checkpoint, re-partition the shard across the surviving (or replacement) members, and replay forward. If the <em>leader</em> is the one lost, Raft elects a new leader from within the cell and it resumes from the replicated checkpoint metadata. The checkpoint cadence K is the one real tuning knob: smaller K means less recomputation after a failure but more overhead in the steady state.</p>
+
+      <h3>Where mitosis meets lockstep</h3>
+      <p class="measure">This is the collision flagged back in section 03 (rule R1), now made concrete. A member can't join or leave mid-step without corrupting the barrier group, so <strong>split and merge happen only at a checkpoint boundary</strong>: the coordinator quiesces at the next checkpoint, persists state, the cell divides, each half reloads its slice of the shard, and both resume from that checkpoint. Growing a running job's membership reshapes the data partition the same way &mdash; also a checkpoint-boundary operation, never a live one.</p>
+
+      <ul class="rules">
+        <li><span class="rn">B1</span><span class="rt"><b>Bound the barrier with a per-step deadline.</b> A missed deadline is a failure to recover from, not a wait to endure &mdash; otherwise one hung worker stalls the cell forever.</span></li>
+        <li><span class="rn">B2</span><span class="rt"><b>Checkpoint every K steps.</b> It's the only resume point a lockstep job has; K trades steady-state overhead against recompute-on-failure.</span></li>
+        <li><span class="rn">B3</span><span class="rt"><b>Resize only at a checkpoint boundary.</b> Quiesce, snapshot, divide or grow, reload shards, resume &mdash; never swap a member mid-step.</span></li>
+        <li><span class="rn">B4</span><span class="rt"><b>All members present before step 0.</b> Gang admission is mandatory here &mdash; start with a partial group and it deadlocks at the very first barrier, waiting on peers that were never scheduled.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 08 LEADER -->
+  <section>
+    <div class="sec-head"><span class="sec-num">08</span><h2>Cell internals: the <code>leader</code> driver</h2></div>
+    <div class="sec-body">
+      <p class="measure">The leader driver runs coordinated <strong>rounds</strong> (BSP supersteps) with one authority holding the global state. It powers <code>graph-compute</code>. Unlike barrier, the workers aren't symmetric peers &mdash; the leader hands out work and folds results, so its failure story is asymmetric.</p>
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 280" role="img" aria-label="A leader box holds global state and runs a self-loop that folds results and advances the superstep. It assigns work and state to three followers that compute their shards and report results back. On leader loss, Raft elects a new leader from the cell and resumes from replicated state.">
+            <defs>
+              <marker id="la" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+              <marker id="lm" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+              <marker id="lp" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--plane)"/></marker>
+            </defs>
+            <path d="M118 92 C 92 50, 256 50, 232 92" class="d-flow" stroke="var(--plane)" marker-end="url(#lp)"/>
+            <text class="d-lbl-p" x="175" y="44" text-anchor="middle">fold results · advance superstep</text>
+
+            <rect class="d-plane" x="70" y="92" width="180" height="80" rx="12"/>
+            <text class="d-lbl-p" x="160" y="126" text-anchor="middle" font-weight="600" font-size="14">LEADER</text>
+            <text class="d-lbl-s" x="160" y="146" text-anchor="middle">holds global state</text>
+
+            <path class="d-flow-a" d="M250 114 L558 86" marker-end="url(#la)"/>
+            <text class="d-lbl-a" x="405" y="90" text-anchor="middle">assign work + state</text>
+            <path class="d-flow" d="M558 150 L250 150" marker-end="url(#lm)"/>
+            <text class="d-lbl-s" x="405" y="167" text-anchor="middle">report results</text>
+
+            <rect class="d-box" x="560" y="60" width="230" height="46" rx="9"/>
+            <text class="d-lbl" x="675" y="88" text-anchor="middle">follower · computes shard</text>
+            <rect class="d-box" x="560" y="114" width="230" height="46" rx="9"/>
+            <text class="d-lbl" x="675" y="142" text-anchor="middle">follower · computes shard</text>
+            <rect class="d-box" x="560" y="168" width="230" height="46" rx="9"/>
+            <text class="d-lbl" x="675" y="196" text-anchor="middle">follower · computes shard</text>
+
+            <path d="M160 172 L160 226" class="d-dash" stroke="var(--plane)" marker-end="url(#lp)"/>
+            <text class="d-lbl-p" x="172" y="203" text-anchor="start" font-size="11">on leader loss</text>
+            <rect x="70" y="228" width="470" height="40" rx="9" fill="var(--plane-sf)" stroke="var(--plane)" stroke-width="1.2"/>
+            <text class="d-lbl-s" x="90" y="252" text-anchor="start">Raft elects a new leader from the cell · resume from replicated state</text>
+          </svg>
+        </div>
+        <figcaption><b>One authority, symmetric rounds, asymmetric failure.</b> A lost follower is a cheap reassignment inside the round; a lost leader is the real event &mdash; Raft promotes a new one from the cell and resumes from the replicated checkpoint. The leader's fan-out/fan-in bandwidth is what caps the cell at low thousands.</figcaption>
+      </figure>
+
+      <ul class="rules">
+        <li><span class="rn">L1</span><span class="rt"><b>Only the leader's state is precious.</b> Replicate and checkpoint it; followers hold nothing that can't be recomputed from a reassignment.</span></li>
+        <li><span class="rn">L2</span><span class="rt"><b>Membership changes between rounds.</b> The leader rebalances assignments at a round boundary &mdash; cheaper than barrier because the leader mediates the reshape.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 09 MESSAGE-PASSING -->
+  <section>
+    <div class="sec-head"><span class="sec-num">09</span><h2>Cell internals: the <code>message-passing</code> driver</h2></div>
+    <div class="sec-body">
+      <p class="measure">The message-passing driver is the actor model: each worker has an address and a mailbox, sends messages to specific peers, and reacts to what arrives. There is no global barrier, no central authority, and no shared memory &mdash; progress is emergent. It powers <code>agent-sim</code>.</p>
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 270" role="img" aria-label="Four actors exchange asynchronous messages peer-to-peer with no central node and no global step. One actor has crashed; a supervisor restarts it from its last snapshot.">
+            <defs>
+              <marker id="mm" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+              <marker id="mc" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--crit)"/></marker>
+            </defs>
+            <path class="d-dash" d="M208 100 L334 82" marker-end="url(#mm)"/>
+            <path class="d-dash" d="M386 82 L514 104" marker-end="url(#mm)"/>
+            <path class="d-dash" d="M392 166 L372 104" marker-end="url(#mm)"/>
+            <path class="d-dash" d="M522 132 L424 176" marker-end="url(#mm)"/>
+
+            <circle class="d-node" cx="180" cy="100" r="30"/>
+            <text class="d-lbl-s" x="180" y="104" text-anchor="middle">actor</text>
+            <circle class="d-node" cx="360" cy="80" r="30"/>
+            <text class="d-lbl-s" x="360" y="84" text-anchor="middle">actor</text>
+            <circle class="d-node" cx="400" cy="190" r="30"/>
+            <text class="d-lbl-s" x="400" y="194" text-anchor="middle">actor</text>
+
+            <circle cx="540" cy="110" r="30" fill="none" stroke="var(--crit)" stroke-width="1.9"/>
+            <text x="540" y="115" text-anchor="middle" fill="var(--crit)" font-size="15" font-weight="600">&#215;</text>
+            <text x="540" y="156" text-anchor="middle" fill="var(--crit)" font-size="11">crashed</text>
+
+            <rect class="d-box" x="640" y="176" width="210" height="54" rx="10"/>
+            <text class="d-lbl" x="745" y="200" text-anchor="middle" font-weight="600">SUPERVISOR</text>
+            <text class="d-lbl-s" x="745" y="218" text-anchor="middle">restart from snapshot</text>
+            <path d="M700 176 L566 130" class="d-flow" stroke="var(--crit)" marker-end="url(#mc)"/>
+
+            <text class="d-lbl-s" x="300" y="245" text-anchor="middle">dashed = async message · no global step · no shared memory</text>
+          </svg>
+        </div>
+        <figcaption><b>No barrier, no boss &mdash; correctness lives in the protocol.</b> Actors make progress independently, so failure is local: a supervisor restarts a crashed actor from its snapshot and in-flight messages are redelivered. The price of that resilience is no global ordering or consistency guarantee &mdash; the message protocol has to provide it.</figcaption>
+      </figure>
+
+      <ul class="rules">
+        <li><span class="rn">M1</span><span class="rt"><b>Design messages idempotent and order-tolerant.</b> There is no global ordering; a redelivered or out-of-order message must not corrupt state.</span></li>
+        <li><span class="rn">M2</span><span class="rt"><b>Failure is local.</b> A supervisor restarts one actor from its snapshot &mdash; no global rollback, so cells can stay large.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 10 INDEPENDENT -->
+  <section>
+    <div class="sec-head"><span class="sec-num">10</span><h2>Cell internals: the <code>independent</code> driver</h2></div>
+    <div class="sec-body">
+      <p class="measure">The default, and the simplest: no driver at all. The cell is a pull queue, workers grab tasks that reference nothing but their own input, and results are collected at the end. It powers five of the nine library templates &mdash; the bread-and-butter of large-scale compute.</p>
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 250" role="img" aria-label="A task queue feeds three workers that pull tasks independently and send results to a collector. A failed task is re-queued. There are no edges between workers.">
+            <defs>
+              <marker id="ia" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+              <marker id="im" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+              <marker id="ic" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--crit)"/></marker>
+            </defs>
+            <text class="d-lbl" x="115" y="52" text-anchor="middle" font-weight="600">TASK QUEUE</text>
+            <rect class="d-box" x="40" y="62" width="150" height="104" rx="11"/>
+            <rect x="58" y="80" width="114" height="16" rx="4" fill="var(--accent-sf)" stroke="var(--accent)"/>
+            <rect x="58" y="102" width="114" height="16" rx="4" fill="var(--accent-sf)" stroke="var(--accent)"/>
+            <rect x="58" y="124" width="114" height="16" rx="4" fill="var(--accent-sf)" stroke="var(--accent)"/>
+            <rect x="58" y="146" width="114" height="16" rx="4" fill="var(--accent-sf)" stroke="var(--accent)"/>
+
+            <path class="d-flow-a" d="M190 96 L300 78" marker-end="url(#ia)"/>
+            <path class="d-flow-a" d="M190 116 L300 120" marker-end="url(#ia)"/>
+            <path class="d-flow-a" d="M190 138 L300 162" marker-end="url(#ia)"/>
+            <text class="d-lbl-a" x="243" y="104" text-anchor="middle">pull</text>
+
+            <rect class="d-box" x="300" y="60" width="150" height="40" rx="9"/>
+            <text class="d-lbl" x="375" y="84" text-anchor="middle">worker</text>
+            <rect class="d-box" x="300" y="112" width="150" height="40" rx="9"/>
+            <text class="d-lbl" x="375" y="136" text-anchor="middle">worker</text>
+            <rect class="d-box" x="300" y="164" width="150" height="40" rx="9"/>
+            <text class="d-lbl" x="375" y="188" text-anchor="middle">worker</text>
+
+            <path class="d-flow" d="M450 80 L556 116" marker-end="url(#im)"/>
+            <path class="d-flow" d="M450 132 L556 128" marker-end="url(#im)"/>
+            <path class="d-flow" d="M450 184 L556 140" marker-end="url(#im)"/>
+
+            <rect class="d-box" x="558" y="98" width="150" height="60" rx="11"/>
+            <text class="d-lbl" x="633" y="124" text-anchor="middle" font-weight="600">COLLECT</text>
+            <text class="d-lbl-s" x="633" y="142" text-anchor="middle">merge results</text>
+
+            <path d="M375 204 C 375 232, 115 232, 115 168" class="d-dash" stroke="var(--crit)" marker-end="url(#ic)"/>
+            <text x="245" y="228" fill="var(--crit)" font-size="11" text-anchor="middle" font-family="IBM Plex Mono, monospace">failed task &#8594; re-queued</text>
+            <text class="d-lbl-s" x="740" y="128" text-anchor="middle">no inter-worker edges</text>
+          </svg>
+        </div>
+        <figcaption><b>The whole coordination story is a queue.</b> Workers never touch each other, so recovery is trivial &mdash; a failed task simply goes back on the queue for someone else. This is the one driver where a cell can grow or shrink <em>mid-job</em> (the exception to rule R1), because there is no coordination state to disturb.</figcaption>
+      </figure>
+
+      <ul class="rules">
+        <li><span class="rn">I1</span><span class="rt"><b>Make tasks idempotent and re-runnable.</b> Recovery is re-queue-and-retry, so a task that runs twice must produce one correct result.</span></li>
+        <li><span class="rn">I2</span><span class="rt"><b>The only shared step is the final merge.</b> If work needs to coordinate before the end, it isn't independent &mdash; it belongs on a heavier driver.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 11 CLI -->
+  <section>
+    <div class="sec-head"><span class="sec-num">11</span><h2>The CLI is the operational surface</h2></div>
+    <div class="sec-body">
+      <p class="measure">Operational simplicity is delivered as a thin client over the control-plane API &mdash; the whole million-node fleet reduced to a handful of verbs a person actually types.</p>
+      <div class="cli">
+        <div class="cli-top"><span class="d"></span><span class="d"></span><span class="d"></span><span class="ttl">swarm — control plane</span></div>
+<pre><span class="c-out">$</span> <span class="c-cmd">swarm submit</span> <span class="c-arg">job.yaml</span> <span class="c-flag">--wait</span>
+<span class="c-out">  planned 4,096 tasks · coupling=barrier · gang=128</span>
+<span class="c-out">  placed → cell b7 (az-1) · </span><span class="c-p">admitted ✓</span>
+
+<span class="c-out">$</span> <span class="c-cmd">swarm ps</span>
+<span class="c-out">  CELLS 812  MACHINES 41,203  JOBS 27  splits/1h 9</span>
+
+<span class="c-out">$</span> <span class="c-cmd">swarm scale</span> <span class="c-arg">job-4f2</span> <span class="c-flag">--members</span> <span class="c-arg">+512</span>
+<span class="c-out">$</span> <span class="c-cmd">swarm logs</span> <span class="c-arg">job-4f2</span> <span class="c-flag">--follow</span>
+<span class="c-out">$</span> <span class="c-cmd">swarm cell</span> <span class="c-arg">b7</span> <span class="c-flag">--describe</span>   <span class="c-out"># leader, members, health, size vs 2T</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <div class="part-divider"><span>Part II · Build</span></div>
+
+  <!-- 12 TECH STACK -->
+  <section>
+    <div class="sec-head"><span class="sec-num">12</span><h2>Tech stack</h2></div>
+    <div class="sec-body">
+      <p class="measure">The stance is <strong>reuse proven libraries for the hard distributed primitives, build only what's unique to Swarm</strong>. <strong>Go</strong> for the control plane, agent, and CLI &mdash; it's I/O-bound orchestration and the whole primitive ecosystem is already Go-native. <strong>Rust</strong> on the hot path: the WASM host and the worker data path, where throughput and latency matter. Both cross-compile to every OS and architecture, so the agent ships as one native binary per platform.</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Component</th><th>Technology</th><th>Stance</th></tr></thead>
+          <tbody>
+            <tr><td>Control plane · planner · scheduler</td><td class="mono">Go</td><td><span class="tag-build">build</span></td></tr>
+            <tr><td>Cell agent (runs on every machine)</td><td class="mono">Go + Rust runtime</td><td><span class="tag-build">build</span></td></tr>
+            <tr><td>Membership + failure detection</td><td class="mono">memberlist · SWIM</td><td><span class="tag-reuse">reuse</span></td></tr>
+            <tr><td>Per-cell leader + replicated log</td><td class="mono">hashicorp/raft</td><td><span class="tag-reuse">reuse</span></td></tr>
+            <tr><td>RPC · plane&#8596;agent · leader&#8596;worker</td><td class="mono">gRPC / protobuf</td><td><span class="tag-reuse">reuse</span></td></tr>
+            <tr><td>Cell-to-cell async messages</td><td class="mono">NATS</td><td><span class="tag-reuse">reuse</span></td></tr>
+            <tr><td>Open-tier workload sandbox</td><td class="mono">Wasmtime · WASM/WASI</td><td><span class="tag-reuse">reuse</span></td></tr>
+            <tr><td>Core-tier isolation + GPU</td><td class="mono">cgroups / Job Objects + passthrough</td><td><span class="tag-build">build-thin</span></td></tr>
+            <tr><td>Barrier collectives (core tier)</td><td class="mono">NCCL · custom over gRPC</td><td><span class="tag-reuse">mixed</span></td></tr>
+            <tr><td>Checkpoint + artifact store</td><td class="mono">pluggable object store · S3/MinIO/local</td><td><span class="tag-reuse">reuse</span></td></tr>
+            <tr><td>Control-plane state · registry · jobs</td><td class="mono">etcd per region &rarr; FoundationDB at scale</td><td><span class="tag-reuse">reuse</span></td></tr>
+            <tr><td>Result verification (open tier)</td><td class="mono">redundant execution + quorum</td><td><span class="tag-build">build</span></td></tr>
+            <tr><td>Observability</td><td class="mono">OpenTelemetry + cell-level aggregation</td><td><span class="tag-reuse">reuse</span></td></tr>
+            <tr><td>Mitosis · coupling drivers · placement</td><td class="mono">Go / Rust</td><td><span class="tag-build">build · core</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="measure">The <span class="tag-build">build</span> rows are the Swarm-unique core &mdash; the mitosis controller, the four coupling drivers, and capability-based placement. Everything marked <span class="tag-reuse">reuse</span> is a well-worn library we integrate rather than reinvent.</p>
+    </div>
+  </section>
+
+  <!-- 13 REGIONAL CONTROL PLANE -->
+  <section>
+    <div class="sec-head"><span class="sec-num">13</span><h2>The control plane is regional</h2></div>
+    <div class="sec-body">
+      <p class="measure">A single control plane cannot hold a million machines &mdash; its state store and scheduler would become the exact bottleneck the cell design exists to avoid. So the control plane <strong>shards by region</strong>, mirroring the fleet: each region owns its own planner, rendezvous, and cell registry, and regions coordinate only <strong>loosely and asynchronously</strong>. A thin global layer handles cross-region routing and an aggregate, eventually-consistent view &mdash; never strongly-consistent state on the hot path.</p>
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 300" role="img" aria-label="A thin global layer sits above two regional control planes that coordinate asynchronously. Each region owns a planner, rendezvous, and cell registry and routes tasks to its own cells.">
+            <defs>
+              <marker id="s13m" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+              <marker id="s13p" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--plane)"/></marker>
+            </defs>
+            <rect class="d-box" x="220" y="18" width="460" height="42" rx="10"/>
+            <text class="d-lbl" x="450" y="37" text-anchor="middle" font-weight="600" font-size="12">GLOBAL LAYER</text>
+            <text class="d-lbl-s" x="450" y="52" text-anchor="middle" font-size="11">cross-region routing · eventually consistent</text>
+
+            <path class="d-dash" d="M360 60 L250 100" stroke="var(--plane)" marker-end="url(#s13p)"/>
+            <path class="d-dash" d="M540 60 L650 100" stroke="var(--plane)" marker-end="url(#s13p)"/>
+            <text class="d-lbl-p" x="450" y="86" text-anchor="middle" font-size="11">async</text>
+
+            <rect class="d-plane" x="80" y="102" width="320" height="80" rx="12"/>
+            <text class="d-lbl-p" x="100" y="128" font-weight="600">REGION · us-east</text>
+            <text class="d-lbl-s" x="100" y="150" font-size="11">planner · rendezvous · cell registry</text>
+            <rect class="d-plane" x="500" y="102" width="320" height="80" rx="12"/>
+            <text class="d-lbl-p" x="520" y="128" font-weight="600">REGION · eu-west</text>
+            <text class="d-lbl-s" x="520" y="150" font-size="11">planner · rendezvous · cell registry</text>
+
+            <path class="d-flow" d="M170 182 L170 210" marker-end="url(#s13m)"/>
+            <path class="d-flow" d="M320 182 L320 210" marker-end="url(#s13m)"/>
+            <path class="d-flow" d="M590 182 L590 210" marker-end="url(#s13m)"/>
+            <path class="d-flow" d="M740 182 L740 210" marker-end="url(#s13m)"/>
+            <text class="d-lbl-s" x="245" y="203" text-anchor="middle" font-size="10.5">routes tasks</text>
+
+            <rect class="d-cell" x="102" y="212" width="136" height="52" rx="10"/>
+            <text class="d-lbl-a" x="170" y="242" text-anchor="middle" font-size="11">cell a1</text>
+            <rect class="d-cell" x="252" y="212" width="136" height="52" rx="10"/>
+            <text class="d-lbl-a" x="320" y="242" text-anchor="middle" font-size="11">cell a2</text>
+            <rect class="d-cell" x="522" y="212" width="136" height="52" rx="10"/>
+            <text class="d-lbl-a" x="590" y="242" text-anchor="middle" font-size="11">cell b1</text>
+            <rect class="d-cell" x="672" y="212" width="136" height="52" rx="10"/>
+            <text class="d-lbl-a" x="740" y="242" text-anchor="middle" font-size="11">cell b2</text>
+
+            <text class="d-lbl-s" x="450" y="288" text-anchor="middle" font-size="11">agents join their region's cells via its rendezvous (see §14)</text>
+          </svg>
+        </div>
+        <figcaption><b>The fleet's shape, one level up.</b> The control plane shards the same way the fleet does &mdash; per region, loosely coupled &mdash; so no single scheduler or store ever sees all million machines. The global layer routes across regions but holds only an eventually-consistent view.</figcaption>
+      </figure>
+      <ul class="rules">
+        <li><span class="rn">A1</span><span class="rt"><b>No global strongly-consistent state on the hot path.</b> A region schedules from its own store; the global layer is eventually consistent and off the critical path.</span></li>
+        <li><span class="rn">A2</span><span class="rt"><b>A region is a blast-radius boundary.</b> A region failing takes its own cells, not the fleet &mdash; and its agents re-home to a healthy region.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 14 AGENT + NETWORKING -->
+  <section>
+    <div class="sec-head"><span class="sec-num">14</span><h2>The cross-OS agent and NAT-friendly networking</h2></div>
+    <div class="sec-body">
+      <p class="measure">Swarm installs as <strong>one native binary per OS/arch</strong> (Go + the Rust runtime). Because volunteer and edge machines sit behind NAT and firewalls, the agent <strong>dials out</strong> to its regional rendezvous rather than being dialed into &mdash; no inbound ports, works anywhere. On connect it advertises its <strong>capabilities</strong> over gossip, and those capabilities are exactly what the planner places jobs against.</p>
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 260" role="img" aria-label="A machine on any OS runs the swarm agent behind a NAT or firewall. The agent dials out over mTLS to a regional rendezvous, which brokers its membership into a cell. It advertises capabilities: OS, arch, cores, RAM, GPU, locality, trust tier.">
+            <defs>
+              <marker id="s14m" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+              <marker id="s14a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+            </defs>
+            <rect class="d-box" x="36" y="46" width="256" height="170" rx="12"/>
+            <text class="d-lbl" x="56" y="72" font-weight="600">MACHINE · any OS</text>
+            <rect x="56" y="84" width="216" height="40" rx="8" fill="var(--accent-sf)" stroke="var(--accent)" stroke-width="1.4"/>
+            <text class="d-lbl-a" x="164" y="108" text-anchor="middle">swarm agent · Go + Rust</text>
+            <text class="d-lbl-s" x="56" y="148" font-size="11">advertises capabilities:</text>
+            <text class="d-lbl-s" x="56" y="168" font-size="11">os · arch · cores · ram</text>
+            <text class="d-lbl-s" x="56" y="186" font-size="11">gpu · locality · trust tier</text>
+
+            <line x1="336" y1="36" x2="336" y2="224" stroke="var(--muted)" stroke-width="1.4" stroke-dasharray="5 5"/>
+            <text class="d-lbl-s" x="336" y="30" text-anchor="middle" font-size="11">NAT / firewall</text>
+
+            <path class="d-flow-a" d="M292 104 L470 104" marker-end="url(#s14a)"/>
+            <text class="d-lbl-a" x="400" y="94" text-anchor="middle">dials out · mTLS</text>
+
+            <rect class="d-plane" x="472" y="78" width="212" height="58" rx="11"/>
+            <text class="d-lbl-p" x="578" y="103" text-anchor="middle" font-weight="600" font-size="12">REGIONAL RENDEZVOUS</text>
+            <text class="d-lbl-s" x="578" y="121" text-anchor="middle" font-size="11">brokers membership</text>
+
+            <path class="d-flow" d="M684 107 L742 107" marker-end="url(#s14m)"/>
+            <rect class="d-cell" x="744" y="78" width="118" height="58" rx="11"/>
+            <text class="d-lbl-a" x="803" y="103" text-anchor="middle">CELL</text>
+            <text class="d-lbl-s" x="803" y="121" text-anchor="middle" font-size="11">join + gossip</text>
+
+            <text class="d-lbl-s" x="470" y="180" text-anchor="middle" font-size="11">outbound-only — no inbound ports opened on the machine</text>
+          </svg>
+        </div>
+        <figcaption><b>One binary, outbound-only.</b> The agent installs on any OS and dials out to its regional rendezvous, so it works behind NAT and firewalls with no inbound ports. Its advertised capabilities &mdash; including which trust tier it belongs to &mdash; are what the planner matches jobs against.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 15 EXECUTION TIERS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">15</span><h2>Two execution tiers</h2></div>
+    <div class="sec-body">
+      <p class="measure">Trust and capability are the same axis (section 05), so the runtime a task gets is decided by the <strong>tier of the machine it lands on</strong>. Untrusted <strong>open-tier</strong> machines run CPU workloads in a <strong>WASM sandbox</strong> &mdash; the one sandbox uniform across every OS &mdash; and because an untrusted machine can return wrong results, every open-tier result is confirmed by <strong>quorum across redundant runs</strong>. Trusted <strong>core-tier</strong> machines run native with GPUs, once &mdash; the only place barrier training and simulation can go, since WASM has no GPU path.</p>
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 290" role="img" aria-label="The planner routes a task by tier. Open-tier: three untrusted machines run the same task in a WASM sandbox and a quorum check accepts the agreed result. Core-tier: a trusted machine runs the task once, native, with a GPU.">
+            <defs>
+              <marker id="s15m" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+              <marker id="s15a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+            </defs>
+            <rect class="d-plane" x="360" y="16" width="180" height="48" rx="10"/>
+            <text class="d-lbl-p" x="450" y="40" text-anchor="middle" font-weight="600">PLANNER</text>
+            <text class="d-lbl-s" x="450" y="57" text-anchor="middle" font-size="11">route by tier</text>
+
+            <path class="d-flow" d="M380 64 C 250 90, 210 92, 210 104" marker-end="url(#s15m)"/>
+            <text class="d-lbl-s" x="250" y="86" text-anchor="middle" font-size="11" fill="var(--good)">open tier</text>
+            <path class="d-flow" d="M520 64 C 650 90, 690 92, 690 104" marker-end="url(#s15m)"/>
+            <text class="d-lbl-s" x="650" y="86" text-anchor="middle" font-size="11">core tier</text>
+
+            <text class="d-lbl-s" x="205" y="102" text-anchor="middle" font-size="11">untrusted · Wasmtime · CPU</text>
+            <rect class="d-box" x="44" y="108" width="104" height="44" rx="9"/>
+            <text class="d-lbl-s" x="96" y="134" text-anchor="middle" font-size="11">WASM run</text>
+            <rect class="d-box" x="156" y="108" width="104" height="44" rx="9"/>
+            <text class="d-lbl-s" x="208" y="134" text-anchor="middle" font-size="11">WASM run</text>
+            <rect class="d-box" x="268" y="108" width="104" height="44" rx="9"/>
+            <text class="d-lbl-s" x="320" y="134" text-anchor="middle" font-size="11">WASM run</text>
+
+            <path class="d-flow" d="M96 152 L180 202" marker-end="url(#s15m)"/>
+            <path class="d-flow" d="M208 152 L208 202" marker-end="url(#s15m)"/>
+            <path class="d-flow" d="M320 152 L236 202" marker-end="url(#s15m)"/>
+            <rect x="112" y="204" width="192" height="50" rx="10" fill="var(--accent-sf)" stroke="var(--accent)" stroke-width="1.6"/>
+            <text class="d-lbl-a" x="208" y="226" text-anchor="middle" font-size="12">QUORUM CHECK</text>
+            <text class="d-lbl-s" x="208" y="244" text-anchor="middle" font-size="11">same task &#215;3 &rarr; accept agreed</text>
+
+            <rect class="d-cell" x="556" y="104" width="300" height="130" rx="12"/>
+            <text class="d-lbl-a" x="576" y="134" font-weight="600" font-size="13">CORE TIER</text>
+            <text class="d-lbl-s" x="576" y="160" font-size="12">trusted · native + GPU</text>
+            <text class="d-lbl-s" x="576" y="182" font-size="12">run once &mdash; no verification needed</text>
+            <text class="d-lbl-s" x="576" y="210" font-size="12">the only home for barrier / tight jobs</text>
+          </svg>
+        </div>
+        <figcaption><b>The machine's tier decides the runtime.</b> Untrusted open-tier machines run CPU workloads in a WASM sandbox, and every result is confirmed by quorum across redundant runs. Trusted core-tier machines run native with GPUs, once &mdash; the only place barrier training and simulation can go.</figcaption>
+      </figure>
+      <ul class="rules">
+        <li><span class="rn">V1</span><span class="rt"><b>Open-tier results are quorum-verified before acceptance.</b> An untrusted machine can lie or fault; run each task redundantly and accept only the agreed answer.</span></li>
+        <li><span class="rn">V2</span><span class="rt"><b>GPU and tight jobs are core-tier only.</b> WASM has no production GPU path, so training and simulation run native on trusted machines.</span></li>
+        <li><span class="rn">V3</span><span class="rt"><b>Sensitive data never leaves the core tier.</b> Anything confidential stays on trusted infrastructure; the open tier only ever sees non-sensitive, verifiable work.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <div class="part-divider"><span>Part III &middot; Operate &amp; Ship</span></div>
+
+  <!-- 16 FAILURE MODES -->
+  <section>
+    <div class="sec-head"><span class="sec-num">16</span><h2>Failure modes and operations</h2></div>
+    <div class="sec-body">
+      <p class="measure">The whole architecture is a set of <strong>containment boundaries</strong>: a failure is absorbed at the level it happens and never escalates outward. A worker dying is a cell's problem; a cell dying is a region's problem; a region dying is the fleet's problem &mdash; and each outer level barely notices the inner one.</p>
+
+      <h3>Self-registration and the reconnect loop</h3>
+      <p class="measure">Machines join themselves &mdash; the swarm never reaches in. An agent <strong>dials out</strong> to its regional rendezvous and retries with <strong>backoff and jitter, forever</strong>, failing over to another region if its own is unreachable (the jitter prevents a thundering herd when a region recovers). It <strong>enrolls once</strong> for a SPIFFE identity, joins a cell, and stays a member via gossip heartbeats. If the connection drops it simply <strong>resumes the dial loop &mdash; keeping its identity</strong> &mdash; and the agent is crash-only, so a restart just re-runs the same loop.</p>
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 210" role="img" aria-label="An agent dials out to the rendezvous with backoff and jitter, retrying forever and failing over across regions until accepted; it enrolls once for a SPIFFE identity, joins a cell, and heartbeats as a member. If the connection is lost it resumes the dial loop, keeping its identity.">
+            <defs>
+              <marker id="s16a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+              <marker id="s16m" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+              <marker id="s16c" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--crit)"/></marker>
+            </defs>
+            <rect class="d-box" x="36" y="66" width="170" height="56" rx="11"/>
+            <text class="d-lbl" x="121" y="90" text-anchor="middle" font-weight="600">DIAL</text>
+            <text class="d-lbl-s" x="121" y="108" text-anchor="middle" font-size="11">rendezvous</text>
+            <rect class="d-box" x="256" y="66" width="160" height="56" rx="11"/>
+            <text class="d-lbl" x="336" y="90" text-anchor="middle" font-weight="600">ENROLL</text>
+            <text class="d-lbl-s" x="336" y="108" text-anchor="middle" font-size="11">once · get identity</text>
+            <rect class="d-box" x="466" y="66" width="140" height="56" rx="11"/>
+            <text class="d-lbl" x="536" y="90" text-anchor="middle" font-weight="600">JOIN CELL</text>
+            <text class="d-lbl-s" x="536" y="108" text-anchor="middle" font-size="11">gossip</text>
+            <rect x="656" y="66" width="200" height="56" rx="11" fill="var(--accent-sf)" stroke="var(--accent)" stroke-width="1.6"/>
+            <text class="d-lbl-a" x="756" y="90" text-anchor="middle" font-weight="600">HEARTBEAT</text>
+            <text class="d-lbl-s" x="756" y="108" text-anchor="middle" font-size="11">member</text>
+
+            <path class="d-flow-a" d="M206 94 L252 94" marker-end="url(#s16a)"/>
+            <text class="d-lbl-s" x="231" y="83" text-anchor="middle" font-size="10">accepted</text>
+            <path class="d-flow" d="M416 94 L462 94" marker-end="url(#s16m)"/>
+            <text class="d-lbl-s" x="440" y="83" text-anchor="middle" font-size="10">SPIFFE id</text>
+            <path class="d-flow" d="M606 94 L652 94" marker-end="url(#s16m)"/>
+
+            <path class="d-flow" d="M70 66 C 55 34, 187 34, 172 66" marker-end="url(#s16m)"/>
+            <text class="d-lbl-s" x="121" y="28" text-anchor="middle" font-size="10.5">unreachable &rarr; backoff + jitter · try next region</text>
+
+            <path d="M756 122 C 756 176, 121 176, 121 124" class="d-flow" stroke="var(--crit)" marker-end="url(#s16c)"/>
+            <text x="440" y="196" text-anchor="middle" fill="var(--crit)" font-size="11">connection lost &rarr; resume dial loop · keep identity</text>
+          </svg>
+        </div>
+        <figcaption><b>Join yourself; never give up.</b> Registration is a loop, not an event: dial with backoff until accepted, enroll once, heartbeat to stay, and on any drop fall straight back into dialing &mdash; keeping the identity you already earned.</figcaption>
+      </figure>
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 820 250" role="img" aria-label="Nested containment: a worker sits inside a cell, inside a region, inside the fleet. A failure at each level is absorbed at that level and does not escalate outward.">
+            <rect class="d-box" x="30" y="20" width="760" height="210" rx="14"/>
+            <text class="d-lbl" x="50" y="42" font-weight="600" font-size="12">FLEET</text>
+            <text class="d-lbl-s" x="330" y="41" font-size="11">region loss &rarr; agents re-home &middot; global routes around</text>
+
+            <rect x="70" y="56" width="680" height="150" rx="12" fill="var(--plane-sf)" stroke="var(--plane)" stroke-width="1.4"/>
+            <text class="d-lbl-p" x="90" y="78" font-weight="600" font-size="12">REGION</text>
+            <text class="d-lbl-s" x="330" y="77" font-size="11">cell loss &rarr; region reschedules jobs &middot; neighbors merge</text>
+
+            <rect x="110" y="92" width="600" height="86" rx="11" fill="var(--accent-sf)" stroke="var(--accent)" stroke-width="1.4"/>
+            <text class="d-lbl-a" x="130" y="114" font-weight="600" font-size="12">CELL</text>
+            <text class="d-lbl-s" x="330" y="113" font-size="11">worker loss &rarr; re-queue &middot; checkpoint rollback &middot; reassign</text>
+
+            <rect class="d-box" x="150" y="128" width="170" height="40" rx="9"/>
+            <text class="d-lbl" x="235" y="153" text-anchor="middle" font-size="11">WORKER</text>
+            <text class="d-lbl-s" x="520" y="153" text-anchor="middle" font-size="11">each level absorbs its own failures &mdash; blast radius never grows</text>
+          </svg>
+        </div>
+        <figcaption><b>Blast radius is bounded by design.</b> Every level of the hierarchy is a containment boundary, so no single failure &mdash; a machine, a leader, a cell, even a whole region &mdash; can cascade into a fleet-wide outage.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Failure</th><th>Detected by</th><th>Response</th></tr></thead>
+          <tbody>
+            <tr><td>Worker / machine dies</td><td class="mono">gossip · SWIM</td><td>driver-specific: re-queue · rollback to checkpoint · reassign · restart actor</td></tr>
+            <tr><td>Cell leader dies</td><td class="mono">Raft</td><td>re-elect from the cell · resume from replicated log</td></tr>
+            <tr><td>Whole cell dies</td><td class="mono">cell heartbeat lost</td><td>planner reschedules its jobs · neighbors merge</td></tr>
+            <tr><td>Rendezvous dies</td><td class="mono">agent reconnect</td><td>agent dials the next rendezvous in its region</td></tr>
+            <tr><td>Region dies</td><td class="mono">region heartbeat lost</td><td>agents re-home to a healthy region · global routes around</td></tr>
+            <tr><td>Regional planner dies</td><td class="mono">replicated · Raft/etcd</td><td>standby takes over · in-flight pulls keep running</td></tr>
+            <tr><td>Cell network partition</td><td class="mono">SWIM + Raft</td><td>minority steps down · barrier stalls &rarr; deadline &rarr; treated as failure</td></tr>
+            <tr><td>Straggler</td><td class="mono">per-step deadline</td><td>declared dead, recovered as a failure (B1)</td></tr>
+            <tr><td>Open-tier bad result</td><td class="mono">quorum mismatch</td><td>reject and re-run (V1)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Operating at fleet scale</h3>
+      <p class="measure">Two things change when the fleet is a million machines. <strong>Observability can't scrape per node</strong> &mdash; metrics are pre-aggregated at the cell and rolled up per region, so cardinality stays bounded. <strong>Upgrades roll by draining</strong>: the agent is a single binary, so a cell is cordoned, its jobs checkpoint-migrate or drain, and the new version rolls in &mdash; gRPC/protobuf keeps mixed versions compatible during the roll. Machine maintenance is the same primitive: cordon, drain, done.</p>
+
+      <ul class="rules">
+        <li><span class="rn">O1</span><span class="rt"><b>Observe at the cell, not the node.</b> Pre-aggregate per cell and per region; per-node scraping does not survive a million machines.</span></li>
+        <li><span class="rn">O2</span><span class="rt"><b>Upgrade and maintain by draining.</b> Cordon a cell, let its jobs checkpoint-migrate, roll the binary; protocol compatibility covers the version skew mid-roll.</span></li>
+        <li><span class="rn">O3</span><span class="rt"><b>Agents self-register and never give up.</b> Dial-out with backoff and jitter, retry forever, fail over across regions; identity is kept across reconnects.</span></li>
+        <li><span class="rn">O4</span><span class="rt"><b>Detection is adaptive by tier; recovery is automatic.</b> Fast eviction for tight core-tier jobs, patient timeouts for the flaky open tier; the planner reschedules failed jobs itself, no human in the loop.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 17 SECURITY MODEL -->
+  <section>
+    <div class="sec-head"><span class="sec-num">17</span><h2>Security model</h2></div>
+    <div class="sec-body">
+      <p class="measure">Every machine that joins gets a <strong>cryptographic identity</strong> from the control-plane CA, built on <strong>SPIFFE/SPIRE</strong>. It presents an enrollment token &mdash; operator-issued for core-tier machines, <strong>anonymous self-serve</strong> for the open tier &mdash; gets an mTLS certificate, and from then on every connection (rendezvous, planner, cell gossip) is mutually authenticated and encrypted. The trust tier is baked into the identity, so the planner gates placement on it.</p>
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 200" role="img" aria-label="A machine enrolls with a join token; the control-plane CA issues it an mTLS identity certificate; the agent then presents that certificate on every connection to the rendezvous, planner, and gossip.">
+            <defs>
+              <marker id="s17a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+              <marker id="s17m" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+            </defs>
+            <rect class="d-box" x="40" y="70" width="180" height="64" rx="11"/>
+            <text class="d-lbl" x="130" y="98" text-anchor="middle" font-weight="600">MACHINE</text>
+            <text class="d-lbl-s" x="130" y="116" text-anchor="middle" font-size="11">agent + join token</text>
+
+            <path class="d-flow-a" d="M222 90 L358 90" marker-end="url(#s17a)"/>
+            <text class="d-lbl-a" x="290" y="80" text-anchor="middle" font-size="11">1 · enroll (token)</text>
+            <path class="d-flow" d="M358 116 L222 116" marker-end="url(#s17m)"/>
+            <text class="d-lbl-s" x="290" y="134" text-anchor="middle" font-size="11">2 · mTLS identity cert</text>
+
+            <rect class="d-plane" x="360" y="66" width="200" height="72" rx="11"/>
+            <text class="d-lbl-p" x="460" y="94" text-anchor="middle" font-weight="600">CONTROL-PLANE CA</text>
+            <text class="d-lbl-s" x="460" y="112" text-anchor="middle" font-size="11">issues tiered identity</text>
+
+            <path class="d-flow-a" d="M562 102 L700 102" marker-end="url(#s17a)"/>
+            <text class="d-lbl-a" x="631" y="92" text-anchor="middle" font-size="11">3 · every conn mTLS</text>
+
+            <rect class="d-cell" x="702" y="70" width="158" height="64" rx="11"/>
+            <text class="d-lbl-a" x="781" y="94" text-anchor="middle" font-size="12">RENDEZVOUS</text>
+            <text class="d-lbl-s" x="781" y="112" text-anchor="middle" font-size="11">planner · gossip</text>
+          </svg>
+        </div>
+        <figcaption><b>No anonymous access.</b> Identity is issued once at enrollment and presented on every connection thereafter, with the trust tier encoded in the certificate &mdash; so authentication, encryption, and tier-based placement all ride the same credential.</figcaption>
+      </figure>
+
+      <h3>What a malicious participant can actually do</h3>
+      <p class="measure">A participant is only a worker: it pulls a task, runs it, returns a result, and gossips its own health. So a hostile machine's whole repertoire is three moves &mdash; <strong>lie about its result</strong>, <strong>read what it's handed</strong>, and <strong>fake many identities</strong> (a Sybil attack, below). The architecture shrinks even that: because open-tier jobs are <code>independent</code>, workers never talk to each other, and untrusted machines are never placed in tight cells alongside others &mdash; so a bad machine has no peer to attack and its <strong>blast radius is its own single task</strong>. Sensitive data never reaches it (V3), and gossip is authenticated, so it can only ever speak for itself. That is why the threat model is pragmatic: the real risk is a machine lying about its own work, possibly at scale.</p>
+
+      <h3>Sybil resistance without accounts</h3>
+      <p class="measure">A <strong>Sybil attack</strong> is one attacker spinning up many fake identities to overpower a system that assumes one identity is one participant &mdash; here, to win a quorum vote and force a wrong result. You cannot stop it with self-reported hardware IDs: a <code>MAC address</code> is trivially spoofed, invisible across the internet, and fresh per VM or container &mdash; anything an untrusted machine says about itself can be forged. Real hardware binding needs <strong>TPM / secure-enclave attestation</strong> (via SPIRE node attestation), which we use on the core tier but can't rely on for random open-tier machines. So the open tier doesn't try to enforce one-identity-per-machine &mdash; it makes extra identities <em>useless</em>:</p>
+      <ul class="rules">
+        <li><span class="rn">Q</span><span class="rt"><b>Quorum + random assignment.</b> Each task runs on K machines chosen randomly from the whole pool; forcing a wrong answer needs a large fraction of total compute, not a few fake nodes.</span></li>
+        <li><span class="rn">R</span><span class="rt"><b>Reputation gating.</b> A new anonymous identity starts at zero trust and is always cross-checked; trust is earned only by agreeing with quorum over time &mdash; so every Sybil must independently do honest work.</span></li>
+        <li><span class="rn">H</span><span class="rt"><b>Honeypot spot-checks.</b> Occasionally hand out a task whose answer is known; a lie gets the identity blacklisted. No account required.</span></li>
+        <li><span class="rn">P</span><span class="rt"><b>Optional proof-of-work to enroll.</b> A small puzzle puts a cost floor under mass identity creation.</span></li>
+      </ul>
+
+      <h3>Threats and mitigations</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Threat</th><th>Mitigation</th></tr></thead>
+          <tbody>
+            <tr><td>Malicious / faulty host lies about results</td><td>quorum verification (V1) · sensitive work stays core-tier</td></tr>
+            <tr><td>Sybil &mdash; one attacker, many fake identities</td><td>quorum + random assignment · reputation gating · honeypots · optional proof-of-work</td></tr>
+            <tr><td>Malicious workload code</td><td>WASM sandbox (open tier) · signed workloads verified before run · least-privilege WASI</td></tr>
+            <tr><td>Network attacker (MITM / eavesdrop)</td><td>mTLS everywhere · encrypted gossip and NATS</td></tr>
+            <tr><td>Rogue machine joining</td><td>enrollment tokens · issued identity · trust-tier gating</td></tr>
+            <tr><td>Data exfiltration</td><td>sensitive data core-tier only (V3) · encryption at rest and in transit</td></tr>
+            <tr><td>Cross-tenant interference</td><td>dedicated cells per tight job (R4) · sandbox isolation</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <ul class="rules">
+        <li><span class="rn">S1</span><span class="rt"><b>Every participant has a cryptographic identity.</b> mTLS on every connection; no anonymous access to the control plane.</span></li>
+        <li><span class="rn">S2</span><span class="rt"><b>Workloads are signed and verified before running.</b> An agent refuses code whose signature doesn't check &mdash; blocks tampered or spoofed tasks.</span></li>
+        <li><span class="rn">S3</span><span class="rt"><b>Least privilege by default.</b> WASI grants only the resources a job declares; core-tier native jobs run under OS limits.</span></li>
+        <li><span class="rn">S4</span><span class="rt"><b>Bind identity to hardware only where you can.</b> Core-tier machines use TPM / SPIRE node attestation; the open tier can't (self-reported IDs are forgeable), so it relies on quorum and reputation instead.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 06 DONT BUILD -->
+  <section>
+    <div class="sec-head"><span class="sec-num">18</span><h2>Deliberately not building this</h2></div>
+    <div class="sec-body">
+      <p class="measure">The core is four moving parts. Everything below is a tempting complication that the threshold-and-declaration model makes unnecessary &mdash; each one buys cost and fragility without buying the requirements.</p>
+      <div class="avoid">
+        <div class="avoid-card">
+          <h4>Continuous rebalancing</h4>
+          <p>A control loop chasing "optimum" cell sizes pays the tear-down cost constantly. Split/merge at thresholds gets stability for free.</p>
+        </div>
+        <div class="avoid-card">
+          <h4>Cross-cell consensus</h4>
+          <p>Any global agreement reintroduces the O(N²) / 5–7-voter wall. Cells coordinate only through async messages, never a shared vote.</p>
+        </div>
+        <div class="avoid-card">
+          <h4>Placement optimization</h4>
+          <p>Elaborate bin-packing across a million nodes. The coupling field plus "fill until 2T" is enough; measure before adding a solver.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 19 ROADMAP -->
+  <section>
+    <div class="sec-head"><span class="sec-num">19</span><h2>Phased roadmap</h2></div>
+    <div class="sec-body">
+      <p class="measure">The sequence proves a working, geo-distributed swarm on easy workloads first, then adds capability, openness, scale, and finally self-tuning &mdash; each phase gated by a concrete exit criterion. It stays inside the non-goals of section 18: the later phases refine what we designed, never a continuous-rebalancing optimizer or a heavy placement solver.</p>
+      <div class="roadmap">
+        <div class="phase"><div class="phase-tag">P0</div><div class="phase-body">
+          <h4>Core loop + easy mitosis <span class="phase-scope">single region · trusted · native</span></h4>
+          <p class="ships">Agent self-registration (dial-out, backoff/jitter) · gossip membership · split/merge in the independent case · planner &rarr; queue &rarr; pull · CLI. Templates: keyspace-search, monte-carlo.</p>
+          <p class="exit"><b>Exit</b> &mdash; an independent job runs on a self-scaling single-region fleet and returns correct results; cells split and merge under load.</p>
+        </div></div>
+        <div class="phase"><div class="phase-tag">P1</div><div class="phase-body">
+          <h4>Multi-region reach <span class="phase-scope">still independent</span></h4>
+          <p class="ships">Regional control planes · per-region rendezvous · retry-forever + cross-region failover · thin global routing · cross-region job spread. Plus the throwaway barrier spike.</p>
+          <p class="exit"><b>Exit</b> &mdash; the fleet spans two or more regions, a job spreads across them, agents fail over between regions, and barrier mechanics are proven in the spike.</p>
+        </div></div>
+        <div class="phase"><div class="phase-tag">P2</div><div class="phase-body">
+          <h4>Tight coupling + full driver set <span class="phase-scope">core tier</span></h4>
+          <p class="ships">Per-cell Raft leader · barrier, leader, message-passing drivers · checkpointing · mitosis-at-checkpoint (B3) · gang scheduling · GPU · adaptive-by-tier detection. Templates: dist-training, sci-sim, graph-compute, agent-sim.</p>
+          <p class="exit"><b>Exit</b> &mdash; all nine templates run on the core tier; a GPU training job completes with checkpoint recovery after an induced failure; a barrier cell splits cleanly at a checkpoint boundary.</p>
+        </div></div>
+        <div class="phase"><div class="phase-tag">P3</div><div class="phase-body">
+          <h4>Open / untrusted tier</h4>
+          <p class="ships">WASM (Wasmtime) sandbox · result verification (quorum + random assignment) · reputation gating · honeypot spot-checks · anonymous SPIFFE/SPIRE enrollment · workload signing.</p>
+          <p class="exit"><b>Exit</b> &mdash; untrusted machines run independent jobs; quorum rejects an injected wrong result; a honeypot-caught liar is de-weighted; anonymous enrollment issues a valid identity.</p>
+        </div></div>
+        <div class="phase"><div class="phase-tag">P4</div><div class="phase-body">
+          <h4>Scale infrastructure</h4>
+          <p class="ships">FoundationDB registry · observability aggregation (cell/region rollup) · rolling upgrades by drain · backpressure / rate-limiting.</p>
+          <p class="exit"><b>Exit</b> &mdash; control plane and registry sustain target load with no single bottleneck; a rolling upgrade completes with zero job loss; metric cardinality stays bounded at fleet scale.</p>
+        </div></div>
+        <div class="phase"><div class="phase-tag">P5</div><div class="phase-body">
+          <h4>Production readiness / GA</h4>
+          <p class="ships">Multi-tenancy (quotas, fairness, isolation) · disaster recovery + chaos testing · SLAs and alerting · optional TPM/attestation on the core tier · security audit.</p>
+          <p class="exit"><b>Exit</b> &mdash; tenant quotas and fairness are enforced; a DR drill recovers a lost region; the security review passes; SLA targets are met in staging.</p>
+        </div></div>
+        <div class="phase"><div class="phase-tag">P6</div><div class="phase-body">
+          <h4>Self-tuning + full-scale GA <span class="phase-scope">full design realized</span></h4>
+          <p class="ships">Signal-based adaptive mitosis (split on measured p99, the §03 upgrade) · capability/locality-aware placement refinement (short of a solver, per §18) · reputation maturity · sustained 1M-node validation.</p>
+          <p class="exit"><b>Exit</b> &mdash; mitosis splits on a measured signal, placement honors capability and locality, and a sustained run at ~1M nodes is stable. The design is realized.</p>
+        </div></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot-inner">
+      <span>Swarm · cell-based orchestration · design brief</span>
+      <span>core: cells · gossip · per-cell leader · async messages</span>
+    </div>
+  </footer>
+
+</div>
+
+</body>
+</html>

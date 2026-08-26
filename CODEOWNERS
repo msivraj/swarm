@@ -1,0 +1,11 @@
+# The enforcement machinery is owned by a human. Builder / PM / audit agents
+# must never weaken the gates that judge them. Changes to these paths require
+# @msivraj review and are excluded from auto-merge.
+/.github/            @msivraj
+/.golangci.yml       @msivraj
+/tools/fcischeck/    @msivraj
+/CLAUDE.md           @msivraj
+/.claude/            @msivraj
+/Makefile            @msivraj
+/scripts/            @msivraj
+/CODEOWNERS          @msivraj

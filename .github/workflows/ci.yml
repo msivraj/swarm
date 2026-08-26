@@ -1,0 +1,44 @@
+name: gates
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# The authoritative, machine-checked quality bar. A PR must turn every step
+# green; with auto-merge enabled, these gates plus the auditor's required
+# `audit/semantic` status check are all that stands between a builder and main.
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: build
+        run: go build ./...
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt needed on:"; echo "$out"; exit 1; fi
+
+      - name: vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.62.2
+
+      - name: fcischeck (core purity)
+        run: go run ./tools/fcischeck ./internal/core/...
+
+      - name: test (race)
+        run: go test -race ./...
+
+      - name: core coverage >= 90%
+        run: COVER_MIN=90 ./scripts/coverage.sh

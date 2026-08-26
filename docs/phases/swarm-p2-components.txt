@@ -1,0 +1,200 @@
+===============================================================================
+SWARM · P2 — COMPONENT DESIGN
+Functional core / imperative shell · phase 2 of 6
+tight coupling + the four coordination drivers
+===============================================================================
+
+P2 makes the cells actually coordinate. Every driver — barrier, leader,
+message-passing (independent came free in P0) — is the SAME thing under FCIS: a
+pure step(state, event) -> (state, commands) core, hosted by a leader shell that
+executes the commands. Swap the driver; the loop never changes.
+
+
+-------------------------------------------------------------------------------
+01 — ONE SHAPE, FOUR DRIVERS
+-------------------------------------------------------------------------------
+The four coordination flavors from the brief become four instances of one
+interface. Each defines its own State/Event/Command sum types, but every one is
+a pure step that folds an event into new state and a list of commands. The
+PER-CELL LEADER is the shell that hosts whichever driver a job needs.
+
+  type Driver interface {
+    step(state State, ev Event, now Instant) (State, []Command)  // pure, no I/O
+  }
+  // the leader's run loop is driver-agnostic:
+  //   ev := shell.next()                              // I/O
+  //   state, cmds = driver.step(state, ev, clock())   // pure
+  //   shell.exec(cmds)                                // I/O
+
+     events  -->  [ DRIVER.step() ]  -->  commands  -->  leader executes
+  Done·Report      pure · swappable      AllReduce·Assign   collectives · RPCs
+  ·Msg·Deadline                          ·Send·Checkpoint   · checkpoints
+
+  Driver           State                Event (ex)             Command (ex)
+  ---------------  -------------------  ---------------------  -------------------------
+  independent      queue cursor         Pulled · Done          Pull · Execute · Report
+  barrier          step N · partials    Done{w,partial}·Deadline AllReduce·Release·Checkpoint·Evict
+  leader           superstep·assigns    Report{f,result}·RoundTimeout Assign·Fold·Advance·Reassign
+  message-passing  per-actor state      Message · Crash        Send · Restart
+
+
+-------------------------------------------------------------------------------
+02 — THE PER-CELL LEADER HOSTS THE DRIVER
+-------------------------------------------------------------------------------
+PER-CELL LEADER  [cell · new]
+  Responsibility: elect one leader per cell, run the active driver's step,
+    execute its commands. Election is a library concern; coordination is pure.
+  Core (pure):
+    step(state State, ev Event, now Instant) (State, []Command)  // the hosted driver
+    resume(log []Command, ckpt Checkpoint) State                 // recover after loss
+  Shell (I/O): run Raft election (hashicorp/raft), replicate the command log; run
+    loop (gather events -> step -> exec); on leader loss a new leader calls resume
+    from log + last checkpoint.
+  Boundary: events + clock in; new state + commands out. Raft and network are
+    shell; leader failover is tested by feeding a log + checkpoint to resume.
+
+
+-------------------------------------------------------------------------------
+03 — THE THREE COORDINATION DRIVERS
+-------------------------------------------------------------------------------
+(independent shipped in P0 as the trivial case — no coordination, pull queue.)
+
+BARRIER DRIVER  [driver]
+  Responsibility: march every worker in lockstep — compute -> wait for all ->
+    all-reduce -> advance; checkpoint every K; evict stragglers. The P1 spike's
+    core, productionized.
+  Core (pure):
+    step(s Barrier, ev Ev, now Instant) (Barrier, []Cmd)
+      // Ev  = Done{w,partial} | Deadline | Restored{ckpt}
+      // Cmd = AllReduce{partials} | Release{step} | Checkpoint{step} | Evict{w} | Rollback{ckpt}
+      // all Done -> AllReduce+Release; Deadline -> Evict; step%K==0 -> Checkpoint; member lost -> Rollback
+  Shell (I/O): collect Done over gRPC; run the real all-reduce (NCCL/custom); set
+    per-step deadline timer -> Deadline; Checkpoint -> write shard state to object
+    store; Rollback -> reload last checkpoint, re-partition.
+  Boundary: worker reports + clock in; collective/checkpoint/evict out. Straggler-
+    deadline and checkpoint-cadence (B1,B2) are pure — a table test.
+
+LEADER DRIVER  [driver]
+  Responsibility: run coordinated supersteps — assign, collect, fold, advance.
+    Powers graph-compute.
+  Core (pure):
+    step(s Super, ev Ev) (Super, []Cmd)
+      // Ev  = Report{f,result} | RoundTimeout
+      // Cmd = Assign{f,work} | Fold{results} | Advance{superstep} | Reassign{work}
+      // all reports -> Fold+Advance; timeout -> Reassign
+  Shell (I/O): fan Assign out to followers; collect Reports; round timers; persist
+    folded global state to the replicated log.
+  Boundary: follower reports in; assign/fold/advance out. Follower loss = pure
+    Reassign; leader loss = host's resume (02).
+
+MESSAGE-PASSING DRIVER  [driver]
+  Responsibility: deliver messages between actors and supervise them; no global
+    step. Powers agent-sim. Pure core is per-actor + a pure router.
+  Core (pure):
+    react(s Actor, m Message) (Actor, []Send)   // fold one message
+    route(m Message, t RoutingTable) []Delivery
+    onCrash(a ActorID) Supervise                 // Restart{fromSnapshot} | Escalate
+  Shell (I/O): deliver Sends to mailboxes; drain inbound; snapshot actors; restart
+    a crashed one from snapshot; redeliver in-flight (at-least-once).
+  Boundary: a message + actor state in; new state + sends out. No global ordering,
+    so react must be order-tolerant (M1) — property-tested via shuffled/duplicated
+    messages.
+
+
+-------------------------------------------------------------------------------
+04 — CHECKPOINTING & MITOSIS-AT-CHECKPOINT
+-------------------------------------------------------------------------------
+CHECKPOINT  [cell · new]
+  Responsibility: decide when to snapshot, serialize driver state, restore it.
+    Decision + (de)serialization pure; only the store is I/O.
+  Core (pure):
+    due(step int, k int) bool     // cadence
+    snapshot(s State) []byte      // serialize
+    restore(b []byte) State       // deserialize
+  Shell (I/O): write snapshot() bytes to object store (S3/MinIO); read back on
+    Rollback/resume.
+  Boundary: state <-> bytes. restore(snapshot(s)) == s is the round-trip test.
+
+MITOSIS-AT-CHECKPOINT  [mitosis · delta from P0]
+  Responsibility: enforce B3 — a coupled cell may only split/merge at a checkpoint
+    boundary. P0's decide unchanged; a pure gate defers its commands for coupled
+    cells.
+  Core (pure):
+    resizeSafe(c Coupling, atCkpt bool) bool  // Independent always; coupled only at checkpoint
+    gate(m []Mitosis, c Coupling, atCkpt bool) []Mitosis  // pass through or Defer{until: next checkpoint}
+  Shell (I/O): for a coupled cell, quiesce at the next Checkpoint; then execute the
+    deferred Split/Merge (snapshot, divide, reload shards, resume).
+  Boundary: P0's []Mitosis + coupling + at-checkpoint flag in; gated commands out.
+    Independent cells pass straight through; the gate only bites for coupled drivers.
+
+  Timeline: steps N .. N+4, checkpoints at N and N+3. A split requested at N+2 is
+  DEFERRED and executed at the next checkpoint (N+3) — a coupled cell never
+  resizes mid-step, so mitosis and lockstep stop fighting.
+
+
+-------------------------------------------------------------------------------
+05 — ADMISSION & FAILURE TIMING
+-------------------------------------------------------------------------------
+GANG SCHEDULING  [admission · delta]
+  Responsibility: all-or-nothing admission for coupled jobs (B4) — place only if
+    min_members is satisfiable now, or wait. Extends P0's admit.
+  Core (pure):
+    admitGang(job JobSpec, free []CellCapacity) Gang  // Place{[]assignment} | Wait
+      // Place only if min_members fit now; else Wait
+  Shell (I/O): on Place, atomically reserve all slots; on Wait, hold in a pending
+    queue, retry on capacity change.
+  Boundary: job + free capacity in; Place-all or Wait out. "128 needed, 100 free
+    -> Wait" is a pure test — proves a gang never starts half-scheduled.
+
+ADAPTIVE-BY-TIER DETECTION  [detection · delta]
+  Responsibility: set the failure timeout by tier + coupling (O4) — fast for tight
+    core-tier, patient for the open tier. Pure timing math.
+  Core (pure):
+    deadline(t Tier, c Coupling) Duration  // core+barrier -> seconds; open+independent -> tens of s
+    isDead(lastSeen, dl Instant, now Instant) bool
+  Shell (I/O): track lastSeen per member from gossip; fire eviction when isDead
+    flips true on a timer.
+  Boundary: tier, coupling, timestamps in; duration/boolean out. Pure — test
+    "a barrier straggler is evicted in seconds" with no cluster.
+
+GPU is a capability, not a component: GPU-bound jobs extend P0's place with a
+capability filter (match CapSet) — a pure predicate. Only the shell touches the
+device: allocate the GPU, wire up NCCL for the barrier all-reduce.
+
+
+-------------------------------------------------------------------------------
+06 — TEMPLATES: THE DRIVER SEQUENCES, THE TEMPLATE COMPUTES
+-------------------------------------------------------------------------------
+The four coordinated templates plug into a driver via two pure functions: how to
+split the job, and how to combine one step's results. The driver decides WHEN to
+combine (pure sequencing); the template decides HOW (pure math); the shell moves
+the bytes.
+
+  Template        Driver           decompose ->       combine (per step) ->
+  --------------  ---------------  -----------------  ---------------------
+  dist-training   barrier          data shards        all-reduce gradients
+  sci-sim         barrier          spatial domains    boundary exchange
+  graph-compute   leader           vertex partitions  superstep combine
+  agent-sim       message-passing  agent partitions   aggregate state
+
+Three pure layers, one shell: the driver step (when), the template combine (how),
+and P0's decompose (split) are all pure and independently testable; the leader
+shell is the only place a gradient crosses the wire. A new coordinated template
+is a new decompose/combine pair against an existing driver — no shell to write.
+
+
+-------------------------------------------------------------------------------
+07 — WHAT P2 DEFERS
+-------------------------------------------------------------------------------
+P2 completes capability on the trusted core tier: all nine templates run, tight
+jobs included. Still deferred, over the same boundary: the open/untrusted tier
+(WASM sandboxing + quorum/reputation verification) in P3, and scale
+infrastructure (FoundationDB, observability aggregation, rolling upgrades) in P4.
+Both arrive as new pure cores (a sandbox policy decision; a quorum verdict) plus
+new shell actions, with the driver step interface untouched.
+
+
+===============================================================================
+Swarm · P2 component design
+four drivers · one pure step · same FCIS line
+===============================================================================

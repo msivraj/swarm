@@ -1,0 +1,9 @@
+# Build output
+/swarm
+/swarmd
+*.out
+coverage.txt
+coverage.html
+
+# Go
+/vendor/

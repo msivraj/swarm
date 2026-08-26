@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swarm P2 Components</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bg:#F1F4F3; --surface:#FFFFFF; --surface-2:#F7F9F8; --ink:#14201D; --muted:#566964;
+    --line:#DCE4E1; --line-2:#C5D1CD; --accent:#0E8F84; --accent-sf:#0e8f8416;
+    --plane:#3B5B8C; --plane-sf:#3b5b8c14; --good:#2E8256; --warn:#B26F13; --crit:#BC4130;
+    --shadow:0 1px 2px #14201d0c, 0 8px 24px -12px #14201d1f;
+  }
+  :root:not([data-theme="light"]) { @media (prefers-color-scheme: dark) {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  } }
+  :root[data-theme="dark"] {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--bg); color:var(--ink); font-family:"IBM Plex Sans",system-ui,sans-serif;
+    font-size:17px; line-height:1.62; margin:0; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1040px; margin:0 auto; padding:0 24px; }
+  .measure { max-width:720px; }
+
+  header.masthead { border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--surface-2),var(--bg)); }
+  .masthead-inner { padding:26px 24px 22px; max-width:1040px; margin:0 auto;
+    display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+  .brand { display:flex; align-items:center; gap:13px; }
+  .glyph { width:38px; height:38px; flex:none; color:var(--accent); }
+  .brand-text { display:flex; flex-direction:column; line-height:1.1; }
+  .brand-name { font-weight:700; font-size:20px; letter-spacing:-0.02em; }
+  .brand-sub { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    letter-spacing:0.02em; margin-top:3px; }
+  .masthead-meta { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    text-align:right; line-height:1.7; }
+  .masthead-meta b { color:var(--ink); font-weight:600; }
+
+  .hero { padding:56px 0 26px; }
+  .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-weight:500;
+    letter-spacing:0.16em; text-transform:uppercase; color:var(--accent);
+    display:flex; align-items:center; gap:10px; }
+  .eyebrow::before { content:""; width:26px; height:1px; background:var(--accent); display:inline-block; }
+  h1 { font-size:clamp(32px,5.4vw,48px); line-height:1.04; letter-spacing:-0.033em; font-weight:700;
+    margin:20px 0 0; text-wrap:balance; max-width:18ch; }
+  .lede { font-size:clamp(17px,2.3vw,20px); color:var(--muted); margin:22px 0 0; max-width:52ch;
+    text-wrap:pretty; }
+  .lede b { color:var(--ink); font-weight:600; }
+
+  section { padding:38px 0; border-top:1px solid var(--line); margin-top:36px; }
+  .sec-head { display:flex; gap:18px; align-items:baseline; margin-bottom:8px; }
+  .sec-num { font-family:"IBM Plex Mono",monospace; font-size:14px; font-weight:600; color:var(--accent);
+    flex:none; padding-top:4px; }
+  h2 { font-size:clamp(23px,3.4vw,31px); letter-spacing:-0.025em; font-weight:700; margin:0;
+    text-wrap:balance; line-height:1.12; }
+  h3 { font-size:19px; letter-spacing:-0.01em; font-weight:600; margin:0 0 4px; }
+  p { margin:14px 0; }
+  .sec-body { padding-left:0; }
+  @media (min-width:720px){ .sec-body { padding-left:47px; } }
+  strong { font-weight:600; }
+  code,.mono { font-family:"IBM Plex Mono",monospace; font-size:0.88em; }
+  p code,li code { background:var(--accent-sf); color:var(--ink); padding:1px 6px; border-radius:5px;
+    font-size:0.83em; }
+
+  figure { margin:28px 0 8px; }
+  .figframe { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:26px 24px 18px; box-shadow:var(--shadow); overflow-x:auto; }
+  figcaption { font-size:14px; color:var(--muted); margin-top:14px; line-height:1.5; max-width:68ch; }
+  figcaption b { color:var(--ink); font-weight:600; }
+  svg { display:block; max-width:100%; height:auto; }
+  svg text { font-family:"IBM Plex Mono",monospace; }
+  .d-box { fill:var(--surface-2); stroke:var(--line-2); stroke-width:1.5; }
+  .d-core { fill:var(--accent-sf); stroke:var(--accent); stroke-width:1.6; }
+  .d-plane { fill:var(--plane-sf); stroke:var(--plane); stroke-width:1.5; }
+  .d-lbl { fill:var(--ink); font-size:13px; font-weight:500; }
+  .d-lbl-s { fill:var(--muted); font-size:11.5px; }
+  .d-lbl-a { fill:var(--accent); font-size:11.5px; font-weight:600; }
+  .d-lbl-p { fill:var(--plane); font-size:11.5px; font-weight:600; }
+  .d-flow { stroke:var(--muted); stroke-width:1.6; fill:none; }
+  .d-flow-a { stroke:var(--accent); stroke-width:1.8; fill:none; }
+  .d-dash { stroke:var(--muted); stroke-width:1.5; fill:none; stroke-dasharray:5 4; }
+
+  .code-card { background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    overflow:hidden; box-shadow:var(--shadow); margin:16px 0; }
+  .code-top { display:flex; align-items:center; gap:8px; padding:9px 15px; border-bottom:1px solid var(--line);
+    background:var(--surface-2); }
+  .code-top .fn { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  pre { margin:0; padding:16px 18px; overflow-x:auto; font-family:"IBM Plex Mono",monospace;
+    font-size:13px; line-height:1.65; color:var(--ink); }
+  .ty { color:var(--accent); }
+  .kw { color:var(--plane); }
+  .cm { color:var(--muted); }
+
+  .component { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:22px 22px 18px; box-shadow:var(--shadow); margin:18px 0; }
+  .component > .cmp-resp { margin:6px 0 0; color:var(--muted); font-size:15px; }
+  .component > .cmp-resp b { color:var(--ink); }
+  .cmp-name { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .cmp-tag { font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.07em; color:var(--muted); border:1px solid var(--line-2); border-radius:20px;
+    padding:2px 9px; }
+  .cmp-tag.driver { color:var(--accent); border-color:var(--accent); }
+  .cmp-tag.delta { color:var(--warn); border-color:var(--warn); }
+  .fcis-split { display:grid; grid-template-columns:1fr; gap:14px; margin-top:16px; }
+  @media (min-width:760px){ .fcis-split { grid-template-columns:1fr 1fr; } }
+  .fcis-core, .fcis-shell { border-radius:12px; padding:14px 15px; }
+  .fcis-core { background:var(--accent-sf); border:1px solid var(--accent); }
+  .fcis-shell { background:var(--surface-2); border:1px solid var(--line-2); }
+  .fcis-head { font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px; display:flex; gap:7px; align-items:center; }
+  .fcis-core .fcis-head { color:var(--accent); }
+  .fcis-shell .fcis-head { color:var(--muted); }
+  .fcis-core pre { background:transparent; padding:2px 0; font-size:12.5px; }
+  .fcis-shell ul { margin:0; padding-left:17px; }
+  .fcis-shell li { font-size:13.5px; color:var(--ink); line-height:1.5; margin:3px 0; }
+  .boundary { margin-top:14px; font-size:13.5px; color:var(--muted); }
+  .boundary b { color:var(--ink); font-weight:600; }
+
+  .tbl-wrap { overflow-x:auto; margin:20px 0; border:1px solid var(--line); border-radius:12px;
+    box-shadow:var(--shadow); }
+  table { border-collapse:collapse; width:100%; font-size:13.5px; min-width:560px; }
+  th,td { text-align:left; padding:12px 15px; border-bottom:1px solid var(--line); vertical-align:top; }
+  thead th { font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.07em; color:var(--muted); font-weight:500; background:var(--surface-2); }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr { background:var(--surface); }
+  td.mono,td .m { font-family:"IBM Plex Mono",monospace; }
+
+  .note { display:flex; gap:13px; align-items:flex-start; background:var(--surface); border:1px solid var(--line);
+    border-left:3px solid var(--accent); border-radius:10px; padding:15px 17px; box-shadow:var(--shadow);
+    margin:18px 0; }
+  .note .nt { font-size:14.5px; line-height:1.55; }
+  .note .nt b { font-weight:600; }
+
+  footer { border-top:1px solid var(--line); margin-top:52px; padding:28px 0 56px; }
+  .foot-inner { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+</style>
+</head>
+<body>
+
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand">
+      <svg class="glyph" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <rect x="6" y="15" width="16" height="10" rx="5" stroke="currentColor" stroke-width="1.7" transform="rotate(-30 14 20)"/>
+        <rect x="18" y="15" width="16" height="10" rx="5" stroke="currentColor" stroke-width="1.7" transform="rotate(-30 26 20)"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">Swarm · P2</span>
+        <span class="brand-sub">component design · tight coupling + drivers</span>
+      </div>
+    </div>
+    <div class="masthead-meta">
+      <div>phase 2 of 6</div>
+      <div><b>one shape</b> · four drivers</div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero measure">
+    <div class="eyebrow">Component Design · Phase 2</div>
+    <h1>Four coordination drivers, one pure shape.</h1>
+    <p class="lede">P2 makes the cells actually coordinate. Every driver &mdash; barrier, leader, message-passing (independent came free in P0) &mdash; is the <em>same</em> thing under FCIS: a pure <code>step(state, event) &rarr; (state, commands)</code> core, hosted by a leader shell that executes the commands. Swap the driver; the loop never changes.</p>
+  </div>
+
+  <!-- 01 ONE SHAPE -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>One shape, four drivers</h2></div>
+    <div class="sec-body">
+      <p class="measure">The four coordination flavors from the design brief become four instances of one interface. Each defines its own <code>State</code>, <code>Event</code>, and <code>Command</code> sum types, but every one is a pure <code>step</code> that folds an event into new state and a list of commands. The <strong>per-cell leader</strong> is the shell that hosts whichever driver a job needs: it gathers events, calls <code>step</code>, and executes what comes back.</p>
+      <div class="code-card">
+        <div class="code-top"><span class="fn">core/driver.go — the one interface every driver satisfies</span></div>
+<pre><span class="kw">type</span> Driver <span class="kw">interface</span> {
+  step(state State, ev Event, now Instant) (State, <span class="ty">[]Command</span>)  <span class="cm">// pure, no I/O</span>
+}
+<span class="cm">// the leader's run loop is driver-agnostic:</span>
+<span class="cm">//   ev := shell.next()                       // I/O</span>
+<span class="cm">//   state, cmds = driver.step(state, ev, clock())   // pure</span>
+<span class="cm">//   shell.exec(cmds)                         // I/O</span></pre>
+      </div>
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 820 290" role="img" aria-label="A per-cell leader shell hosts a swappable pure driver step function. Events enter, the step returns new state and commands, and the shell executes the commands as collectives, RPCs, and checkpoints.">
+            <defs>
+              <marker id="pa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+              <marker id="pm" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+            </defs>
+            <rect class="d-plane" x="40" y="40" width="740" height="210" rx="16"/>
+            <text class="d-lbl-p" x="62" y="66" font-weight="600" font-size="12">PER-CELL LEADER (shell)</text>
+            <text class="d-lbl-s" x="62" y="84" font-size="11">Raft election · run loop · executes commands</text>
+            <rect class="d-core" x="286" y="108" width="248" height="96" rx="13"/>
+            <text class="d-lbl-a" x="410" y="150" text-anchor="middle" font-weight="600" font-size="13">DRIVER.step()</text>
+            <text class="d-lbl-s" x="410" y="172" text-anchor="middle">pure · swappable per job</text>
+            <path class="d-flow-a" d="M150 156 L282 156" marker-end="url(#pa)"/>
+            <text class="d-lbl-a" x="216" y="146" text-anchor="middle" font-size="10.5">events</text>
+            <path class="d-flow-a" d="M538 156 L672 156" marker-end="url(#pa)"/>
+            <text class="d-lbl-a" x="606" y="146" text-anchor="middle" font-size="10.5">commands</text>
+            <path class="d-flow" d="M690 172 C 690 224, 130 224, 130 172" marker-end="url(#pm)"/>
+            <text class="d-lbl-s" x="410" y="242" text-anchor="middle" font-size="11">leader executes commands &rarr; collectives · RPCs · checkpoints</text>
+          </svg>
+        </div>
+        <figcaption><b>Swap the driver, keep the loop.</b> The leader shell is written once and is driver-agnostic; the coordination logic lives entirely in the pure <code>step</code>. That is what lets all four flavors share failure handling, checkpointing, and the run loop.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Driver</th><th>State</th><th>Event (examples)</th><th>Command (examples)</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">independent</td><td>queue cursor</td><td class="m">Pulled · Done</td><td class="m">Pull · Execute · Report</td></tr>
+          <tr><td class="mono">barrier</td><td>step N · partials</td><td class="m">Done{w,partial} · Deadline</td><td class="m">AllReduce · Release · Checkpoint · Evict</td></tr>
+          <tr><td class="mono">leader</td><td>superstep · assignments</td><td class="m">Report{f,result} · RoundTimeout</td><td class="m">Assign · Fold · Advance · Reassign</td></tr>
+          <tr><td class="mono">message-passing</td><td>per-actor state</td><td class="m">Message · Crash</td><td class="m">Send · Restart</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- 02 LEADER HOST -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>The per-cell leader hosts the driver</h2></div>
+    <div class="sec-body">
+      <div class="component">
+        <div class="cmp-name"><h3>Per-cell leader</h3><span class="cmp-tag">cell · new</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — elect one leader per cell, run the active driver's <code>step</code>, and execute its commands. Election is a library concern; the coordination is the pure driver.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="cm">// the hosted driver's step (see §03)</span>
+<span class="kw">func</span> step(state State, ev Event, now Instant) (State, <span class="ty">[]Command</span>)
+<span class="cm">// what to hand a newly-elected leader after a loss</span>
+<span class="kw">func</span> resume(log <span class="ty">[]Command</span>, ckpt Checkpoint) State</pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>run Raft election (<code>hashicorp/raft</code>); replicate the command log</li>
+              <li>the run loop: gather events (worker RPCs, timers) &rarr; <code>step</code> &rarr; <code>exec</code></li>
+              <li>on leader loss, a new leader calls <code>resume</code> from log + last checkpoint</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — events + clock in; new state + commands out. Raft and the network are shell; "what the leader decides" and "how it recovers" are pure, so leader failover is tested by feeding a log + checkpoint to <code>resume</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 03 THREE DRIVERS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>The three coordination drivers</h2></div>
+    <div class="sec-body">
+      <p class="measure">Each driver is a pure <code>step</code> plus the shell that performs its commands. (<code>independent</code> shipped in P0 as the trivial case &mdash; no coordination, just the pull queue.)</p>
+
+      <!-- BARRIER -->
+      <div class="component">
+        <div class="cmp-name"><h3>Barrier driver</h3><span class="cmp-tag driver">driver</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — march every worker in lockstep: compute → wait for all → all-reduce → advance, checkpointing every K and evicting stragglers. This is the P1 spike's core, productionized.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> step(s Barrier, ev Ev, now Instant) (Barrier, <span class="ty">[]Cmd</span>)
+  <span class="cm">// Ev  = Done{w,partial} | Deadline | Restored{ckpt}</span>
+  <span class="cm">// Cmd = AllReduce{partials} | Release{step}</span>
+  <span class="cm">//     | Checkpoint{step} | Evict{w} | Rollback{ckpt}</span>
+  <span class="cm">// all Done → AllReduce + Release; Deadline → Evict;</span>
+  <span class="cm">// step%K==0 → Checkpoint; member lost → Rollback</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>collect <code>Done</code> over gRPC; run the real all-reduce (NCCL / custom)</li>
+              <li>set the per-step deadline timer &rarr; <code>Deadline</code> event</li>
+              <li><code>Checkpoint</code> → write shard state to the object store</li>
+              <li><code>Rollback</code> → reload the last checkpoint, re-partition</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — worker reports + clock in; collective/checkpoint/evict commands out. The straggler-deadline and checkpoint-cadence rules (B1, B2) are pure &mdash; an injected <code>Deadline</code> or a missing <code>Done</code> is a table test.</p>
+      </div>
+
+      <!-- LEADER DRIVER -->
+      <div class="component">
+        <div class="cmp-name"><h3>Leader driver</h3><span class="cmp-tag driver">driver</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — run coordinated supersteps: assign work, collect reports, fold into global state, advance. Powers <code>graph-compute</code>.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> step(s Super, ev Ev) (Super, <span class="ty">[]Cmd</span>)
+  <span class="cm">// Ev  = Report{f,result} | RoundTimeout</span>
+  <span class="cm">// Cmd = Assign{f,work} | Fold{results}</span>
+  <span class="cm">//     | Advance{superstep} | Reassign{work}</span>
+  <span class="cm">// all reports in → Fold + Advance; timeout → Reassign</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>fan <code>Assign</code> out to followers over gRPC</li>
+              <li>collect <code>Report</code>s; drive round timers</li>
+              <li>persist folded global state to the replicated log</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — follower reports in; assign/fold/advance out. Follower loss is a pure <code>Reassign</code>; leader loss is handled by the host's <code>resume</code> (§02).</p>
+      </div>
+
+      <!-- MESSAGE-PASSING -->
+      <div class="component">
+        <div class="cmp-name"><h3>Message-passing driver</h3><span class="cmp-tag driver">driver</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — deliver messages between actors and supervise them; no global step. Powers <code>agent-sim</code>. Here the pure core is <em>per-actor</em>, plus a pure router.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> react(s Actor, m Message) (Actor, <span class="ty">[]Send</span>)
+  <span class="cm">// an actor folds one message into new state + outbound</span>
+<span class="kw">func</span> route(m Message, t RoutingTable) <span class="ty">[]Delivery</span>
+<span class="kw">func</span> onCrash(a ActorID) Supervise
+  <span class="cm">// Supervise = Restart{fromSnapshot} | Escalate</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>deliver <code>Send</code>s to mailboxes; drain inbound over the network</li>
+              <li>snapshot actors; restart a crashed one from its snapshot</li>
+              <li>redeliver in-flight messages (at-least-once)</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — a message + actor state in; new state + sends out. No global ordering, so <code>react</code> must be written order-tolerant (rule M1) &mdash; property-tested by replaying shuffled/duplicated messages.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 04 CHECKPOINT + MITOSIS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>Checkpointing &amp; mitosis-at-checkpoint</h2></div>
+    <div class="sec-body">
+      <div class="component">
+        <div class="cmp-name"><h3>Checkpoint</h3><span class="cmp-tag">cell · new</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — decide when to snapshot, serialize driver state, and restore it. The decision and the (de)serialization are pure; only the store is I/O.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> due(step <span class="ty">int</span>, k <span class="ty">int</span>) <span class="ty">bool</span>          <span class="cm">// cadence</span>
+<span class="kw">func</span> snapshot(s State) <span class="ty">[]byte</span>            <span class="cm">// serialize</span>
+<span class="kw">func</span> restore(b <span class="ty">[]byte</span>) State             <span class="cm">// deserialize</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>write <code>snapshot()</code> bytes to the object store (S3/MinIO)</li>
+              <li>read them back on <code>Rollback</code> / <code>resume</code></li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — state ⇄ bytes. <code>restore(snapshot(s)) == s</code> is the round-trip property test.</p>
+      </div>
+
+      <div class="component">
+        <div class="cmp-name"><h3>Mitosis-at-checkpoint</h3><span class="cmp-tag delta">mitosis · delta from P0</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — enforce brief rule B3: a coupled cell may only split/merge at a checkpoint boundary. P0's <code>decide</code> is unchanged; a pure gate defers its commands for coupled cells.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> resizeSafe(c Coupling, atCkpt <span class="ty">bool</span>) <span class="ty">bool</span>
+  <span class="cm">// Independent → always; coupled → only at checkpoint</span>
+<span class="kw">func</span> gate(m <span class="ty">[]Mitosis</span>, c Coupling,
+          atCkpt <span class="ty">bool</span>) <span class="ty">[]Mitosis</span>
+  <span class="cm">// pass through, or emit Defer{until: next checkpoint}</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>for a coupled cell, quiesce at the next <code>Checkpoint</code></li>
+              <li>then execute the deferred <code>Split</code>/<code>Merge</code>: snapshot, divide, reload shards, resume</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — P0's <code>[]Mitosis</code> + coupling + at-checkpoint flag in; gated commands out. Independent cells (P0/P1) pass straight through; the gate only bites for coupled drivers.</p>
+      </div>
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 820 170" role="img" aria-label="A timeline of barrier steps with checkpoints every K. A split requested mid-step is deferred and executed only at the next checkpoint boundary.">
+            <defs><marker id="ma" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker></defs>
+            <line x1="40" y1="96" x2="780" y2="96" class="d-flow"/>
+            <g class="d-lbl-s" font-size="10" fill="var(--muted)">
+              <text x="120" y="116" text-anchor="middle">step N</text>
+              <text x="260" y="116" text-anchor="middle">N+1</text>
+              <text x="400" y="116" text-anchor="middle">N+2</text>
+              <text x="540" y="116" text-anchor="middle">N+3</text>
+              <text x="680" y="116" text-anchor="middle">N+4</text>
+            </g>
+            <circle cx="120" cy="96" r="4" fill="var(--muted)"/><circle cx="260" cy="96" r="4" fill="var(--muted)"/>
+            <circle cx="400" cy="96" r="4" fill="var(--muted)"/><circle cx="540" cy="96" r="4" fill="var(--muted)"/>
+            <circle cx="680" cy="96" r="4" fill="var(--muted)"/>
+            <line x1="120" y1="70" x2="120" y2="96" stroke="var(--accent)" stroke-width="2"/>
+            <text x="120" y="60" text-anchor="middle" class="d-lbl-a" font-size="10">checkpoint</text>
+            <line x1="540" y1="70" x2="540" y2="96" stroke="var(--accent)" stroke-width="2"/>
+            <text x="540" y="60" text-anchor="middle" class="d-lbl-a" font-size="10">checkpoint</text>
+            <text x="340" y="150" text-anchor="middle" fill="var(--crit)" font-size="11">split requested (step N+2)</text>
+            <path d="M340 138 C 360 120, 500 118, 538 100" class="d-dash" stroke="var(--crit)" marker-end="url(#ma)"/>
+            <text x="600" y="138" text-anchor="middle" class="d-lbl-a" font-size="10.5">deferred → executed here</text>
+          </svg>
+        </div>
+        <figcaption><b>A coupled cell never resizes mid-step.</b> The split is a pure decision the moment it's due, but its <em>execution</em> waits for the next checkpoint boundary, where quiescing is safe &mdash; so mitosis and lockstep stop fighting.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 05 ADMISSION + DETECTION -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>Admission &amp; failure timing</h2></div>
+    <div class="sec-body">
+      <div class="component">
+        <div class="cmp-name"><h3>Gang scheduling</h3><span class="cmp-tag delta">admission · delta</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — all-or-nothing admission for coupled jobs (brief B4): place only if <code>min_members</code> is satisfiable now, or wait. Extends P0's <code>admit</code>.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> admitGang(job JobSpec, free <span class="ty">[]CellCapacity</span>) Gang
+  <span class="cm">// Gang = Place{[]assignment} | Wait</span>
+  <span class="cm">// Place only if min_members fit now; else Wait</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>on <code>Place</code>, atomically reserve all slots</li>
+              <li>on <code>Wait</code>, hold in a pending queue; retry on capacity change</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — job + free capacity in; <code>Place</code>-all or <code>Wait</code> out. "128 needed, 100 free → Wait" is a pure test, which is how we prove a gang never starts half-scheduled and deadlocks.</p>
+      </div>
+
+      <div class="component">
+        <div class="cmp-name"><h3>Adaptive-by-tier detection</h3><span class="cmp-tag delta">detection · delta</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — set the failure timeout by tier and coupling (brief O4): fast for tight core-tier jobs, patient for the flaky open tier. Pure timing math; the shell only watches the clock.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> deadline(t Tier, c Coupling) Duration
+  <span class="cm">// core+barrier → seconds; open+independent → tens of s</span>
+<span class="kw">func</span> isDead(lastSeen, dl Instant, now Instant) <span class="ty">bool</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>track <code>lastSeen</code> per member from gossip</li>
+              <li>fire an eviction event when <code>isDead</code> flips true on a timer</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — tier, coupling, timestamps in; a duration / a boolean out. Both are pure functions of their arguments &mdash; no cluster needed to test "a barrier straggler is evicted in seconds."</p>
+      </div>
+
+      <div class="note"><span class="nt"><b>GPU is a capability, not a component.</b> GPU-bound jobs are handled by extending P0's <code>place</code> with a capability filter (match <code>CapSet</code> against the task's needs) &mdash; a pure predicate. Only the shell touches the device: allocate the GPU and wire up NCCL for the barrier all-reduce.</span></div>
+    </div>
+  </section>
+
+  <!-- 06 TEMPLATES -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>Templates: the driver sequences, the template computes</h2></div>
+    <div class="sec-body">
+      <p class="measure">The four coordinated templates plug into a driver by supplying two pure functions: how to split the job, and how to combine one step's results. The clean split is that the <strong>driver decides <em>when</em> to combine</strong> (pure sequencing) and the <strong>template decides <em>how</em></strong> (pure math) &mdash; while the shell moves the bytes.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Template</th><th>Driver</th><th>decompose →</th><th>combine (per step) →</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">dist-training</td><td class="m">barrier</td><td>data shards</td><td>all-reduce gradients</td></tr>
+          <tr><td class="mono">sci-sim</td><td class="m">barrier</td><td>spatial domains</td><td>boundary exchange</td></tr>
+          <tr><td class="mono">graph-compute</td><td class="m">leader</td><td>vertex partitions</td><td>superstep combine</td></tr>
+          <tr><td class="mono">agent-sim</td><td class="m">message-passing</td><td>agent partitions</td><td>aggregate state</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note"><span class="nt"><b>Three pure layers, one shell.</b> The driver <code>step</code> (when), the template <code>combine</code> (how), and P0's <code>decompose</code> (split) are all pure and independently testable; the leader shell is the only place a gradient actually crosses the wire. A new coordinated template is a new <code>decompose</code>/<code>combine</code> pair against an existing driver &mdash; no shell to write.</span></div>
+    </div>
+  </section>
+
+  <!-- 07 DEFERRED -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h2>What P2 defers</h2></div>
+    <div class="sec-body">
+      <p class="measure">P2 completes capability on the <strong>trusted core tier</strong>: all nine templates run, tight jobs included. Still deferred, still over the same boundary: the <strong>open/untrusted tier</strong> &mdash; WASM sandboxing plus quorum + reputation verification &mdash; in <strong>P3</strong>, and <strong>scale infrastructure</strong> (FoundationDB, observability aggregation, rolling upgrades) in <strong>P4</strong>. Both arrive as new pure cores (a sandbox policy decision; a quorum verdict) plus new shell actions, with the driver <code>step</code> interface untouched.</p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot-inner">
+      <span>Swarm · P2 component design</span>
+      <span>four drivers · one pure step · same FCIS line</span>
+    </div>
+  </footer>
+
+</div>
+
+</body>
+</html>

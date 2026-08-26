@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swarm P0 Components</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bg:#F1F4F3; --surface:#FFFFFF; --surface-2:#F7F9F8; --ink:#14201D; --muted:#566964;
+    --line:#DCE4E1; --line-2:#C5D1CD; --accent:#0E8F84; --accent-sf:#0e8f8416;
+    --plane:#3B5B8C; --plane-sf:#3b5b8c14; --good:#2E8256; --warn:#B26F13; --crit:#BC4130;
+    --shadow:0 1px 2px #14201d0c, 0 8px 24px -12px #14201d1f;
+  }
+  :root:not([data-theme="light"]) { @media (prefers-color-scheme: dark) {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  } }
+  :root[data-theme="dark"] {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--bg); color:var(--ink); font-family:"IBM Plex Sans",system-ui,sans-serif;
+    font-size:17px; line-height:1.62; margin:0; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1040px; margin:0 auto; padding:0 24px; }
+  .measure { max-width:720px; }
+
+  header.masthead { border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--surface-2),var(--bg)); }
+  .masthead-inner { padding:26px 24px 22px; max-width:1040px; margin:0 auto;
+    display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+  .brand { display:flex; align-items:center; gap:13px; }
+  .glyph { width:38px; height:38px; flex:none; color:var(--accent); }
+  .brand-text { display:flex; flex-direction:column; line-height:1.1; }
+  .brand-name { font-weight:700; font-size:20px; letter-spacing:-0.02em; }
+  .brand-sub { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    letter-spacing:0.02em; margin-top:3px; }
+  .masthead-meta { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    text-align:right; line-height:1.7; }
+  .masthead-meta b { color:var(--ink); font-weight:600; }
+
+  .hero { padding:56px 0 26px; }
+  .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-weight:500;
+    letter-spacing:0.16em; text-transform:uppercase; color:var(--accent);
+    display:flex; align-items:center; gap:10px; }
+  .eyebrow::before { content:""; width:26px; height:1px; background:var(--accent); display:inline-block; }
+  h1 { font-size:clamp(32px,5.4vw,48px); line-height:1.04; letter-spacing:-0.033em; font-weight:700;
+    margin:20px 0 0; text-wrap:balance; max-width:17ch; }
+  .lede { font-size:clamp(17px,2.3vw,20px); color:var(--muted); margin:22px 0 0; max-width:52ch;
+    text-wrap:pretty; }
+  .lede b { color:var(--ink); font-weight:600; }
+
+  section { padding:38px 0; border-top:1px solid var(--line); margin-top:36px; }
+  .sec-head { display:flex; gap:18px; align-items:baseline; margin-bottom:8px; }
+  .sec-num { font-family:"IBM Plex Mono",monospace; font-size:14px; font-weight:600; color:var(--accent);
+    flex:none; padding-top:4px; }
+  h2 { font-size:clamp(23px,3.4vw,31px); letter-spacing:-0.025em; font-weight:700; margin:0;
+    text-wrap:balance; line-height:1.12; }
+  h3 { font-size:19px; letter-spacing:-0.01em; font-weight:600; margin:0 0 4px; }
+  p { margin:14px 0; }
+  .sec-body { padding-left:0; }
+  @media (min-width:720px){ .sec-body { padding-left:47px; } }
+  strong { font-weight:600; }
+  code,.mono { font-family:"IBM Plex Mono",monospace; font-size:0.88em; }
+  p code,li code { background:var(--accent-sf); color:var(--ink); padding:1px 6px; border-radius:5px;
+    font-size:0.83em; }
+
+  figure { margin:28px 0 8px; }
+  .figframe { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:26px 24px 18px; box-shadow:var(--shadow); overflow-x:auto; }
+  figcaption { font-size:14px; color:var(--muted); margin-top:14px; line-height:1.5; max-width:68ch; }
+  figcaption b { color:var(--ink); font-weight:600; }
+  svg { display:block; max-width:100%; height:auto; }
+  svg text { font-family:"IBM Plex Mono",monospace; }
+  .d-box { fill:var(--surface-2); stroke:var(--line-2); stroke-width:1.5; }
+  .d-core { fill:var(--accent-sf); stroke:var(--accent); stroke-width:1.6; }
+  .d-plane { fill:var(--plane-sf); stroke:var(--plane); stroke-width:1.5; }
+  .d-lbl { fill:var(--ink); font-size:13px; font-weight:500; }
+  .d-lbl-s { fill:var(--muted); font-size:11.5px; }
+  .d-lbl-a { fill:var(--accent); font-size:11.5px; font-weight:600; }
+  .d-lbl-p { fill:var(--plane); font-size:11.5px; font-weight:600; }
+  .d-flow { stroke:var(--muted); stroke-width:1.6; fill:none; }
+  .d-flow-a { stroke:var(--accent); stroke-width:1.8; fill:none; }
+
+  /* code blocks */
+  .code-card { background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    overflow:hidden; box-shadow:var(--shadow); margin:16px 0; }
+  .code-top { display:flex; align-items:center; gap:8px; padding:9px 15px; border-bottom:1px solid var(--line);
+    background:var(--surface-2); }
+  .code-top .fn { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  pre { margin:0; padding:16px 18px; overflow-x:auto; font-family:"IBM Plex Mono",monospace;
+    font-size:13px; line-height:1.65; color:var(--ink); }
+  .ty { color:var(--accent); }
+  .kw { color:var(--plane); }
+  .cm { color:var(--muted); }
+
+  /* FCIS component card */
+  .component { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:22px 22px 18px; box-shadow:var(--shadow); margin:18px 0; }
+  .component > .cmp-resp { margin:6px 0 0; color:var(--muted); font-size:15px; }
+  .component > .cmp-resp b { color:var(--ink); }
+  .cmp-name { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .cmp-tag { font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.07em; color:var(--muted); border:1px solid var(--line-2); border-radius:20px;
+    padding:2px 9px; }
+  .fcis-split { display:grid; grid-template-columns:1fr; gap:14px; margin-top:16px; }
+  @media (min-width:760px){ .fcis-split { grid-template-columns:1fr 1fr; } }
+  .fcis-core, .fcis-shell { border-radius:12px; padding:14px 15px; }
+  .fcis-core { background:var(--accent-sf); border:1px solid var(--accent); }
+  .fcis-shell { background:var(--surface-2); border:1px solid var(--line-2); }
+  .fcis-head { font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px; display:flex; gap:7px; align-items:center; }
+  .fcis-core .fcis-head { color:var(--accent); }
+  .fcis-shell .fcis-head { color:var(--muted); }
+  .fcis-core pre { background:transparent; padding:2px 0; font-size:12.5px; }
+  .fcis-shell ul { margin:0; padding-left:17px; }
+  .fcis-shell li { font-size:13.5px; color:var(--ink); line-height:1.5; margin:3px 0; }
+  .boundary { margin-top:14px; font-size:13.5px; color:var(--muted); }
+  .boundary b { color:var(--ink); font-weight:600; }
+
+  .tbl-wrap { overflow-x:auto; margin:20px 0; border:1px solid var(--line); border-radius:12px;
+    box-shadow:var(--shadow); }
+  table { border-collapse:collapse; width:100%; font-size:14px; min-width:520px; }
+  th,td { text-align:left; padding:12px 16px; border-bottom:1px solid var(--line); vertical-align:top; }
+  thead th { font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.07em; color:var(--muted); font-weight:500; background:var(--surface-2); }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr { background:var(--surface); }
+  td.mono { font-family:"IBM Plex Mono",monospace; }
+
+  .note { display:flex; gap:13px; align-items:flex-start; background:var(--surface); border:1px solid var(--line);
+    border-left:3px solid var(--accent); border-radius:10px; padding:15px 17px; box-shadow:var(--shadow);
+    margin:18px 0; }
+  .note .nt { font-size:14.5px; line-height:1.55; }
+  .note .nt b { font-weight:600; }
+
+  footer { border-top:1px solid var(--line); margin-top:52px; padding:28px 0 56px; }
+  .foot-inner { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+</style>
+</head>
+<body>
+
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand">
+      <svg class="glyph" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <rect x="3.5" y="3.5" width="33" height="33" rx="9" stroke="currentColor" stroke-width="1.6" opacity="0.5"/>
+        <rect x="13" y="13" width="14" height="14" rx="4" fill="currentColor"/>
+        <path d="M20 3.5 V13 M20 27 V36.5 M3.5 20 H13 M27 20 H36.5" stroke="currentColor" stroke-width="1.5" opacity="0.7"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">Swarm · P0</span>
+        <span class="brand-sub">component design · functional core / imperative shell</span>
+      </div>
+    </div>
+    <div class="masthead-meta">
+      <div>phase 0 of 6</div>
+      <div><b>core</b> = decisions · <b>shell</b> = I/O</div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero measure">
+    <div class="eyebrow">Component Design · Phase 0</div>
+    <h1>The P0 build, split into pure cores and thin shells.</h1>
+    <p class="lede">Every P0 component is designed as a <b>functional core</b> that decides and an <b>imperative shell</b> that acts. The core is pure and exhaustively testable; the shell is thin and does all the I/O. This doc gives each component its responsibility, its core functions, its shell, and the data crossing between.</p>
+  </div>
+
+  <!-- 01 THE PATTERN -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>The FCIS pattern, applied to Swarm</h2></div>
+    <div class="sec-body">
+      <p class="measure">The dividing line for Swarm is <strong>decisions vs. actions</strong>. The <strong>functional core</strong> takes plain data and returns <em>descriptions of what to do</em> &mdash; commands &mdash; and touches nothing else. The <strong>imperative shell</strong> runs a loop: gather events, call the core, execute the commands it returns. The one rule that keeps the core pure: it never <em>performs</em> an effect and never reads the clock or a random source itself &mdash; the shell reads those and passes them <strong>in as data</strong>, so the core stays deterministic and every decision is reproducible in a unit test.</p>
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 820 300" role="img" aria-label="An outer imperative-shell ring wraps a pure functional core. The shell gathers events plus the clock and randomness as data, passes them into the core, receives commands back, and executes them as effects on the network, disk, and processes.">
+            <defs>
+              <marker id="pa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+              <marker id="pm" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+            </defs>
+            <rect class="d-plane" x="40" y="40" width="740" height="220" rx="16"/>
+            <text class="d-lbl-p" x="62" y="66" font-weight="600" font-size="12">IMPERATIVE SHELL</text>
+            <text class="d-lbl-s" x="62" y="84" font-size="11">gossip · gRPC · disk · clock · randomness · process exec</text>
+
+            <rect class="d-core" x="290" y="112" width="240" height="94" rx="13"/>
+            <text class="d-lbl-a" x="410" y="150" text-anchor="middle" font-weight="600" font-size="13">FUNCTIONAL CORE</text>
+            <text class="d-lbl-s" x="410" y="170" text-anchor="middle">pure · deterministic</text>
+            <text class="d-lbl-s" x="410" y="186" text-anchor="middle">no I/O</text>
+
+            <path class="d-flow-a" d="M150 159 L286 159" marker-end="url(#pa)"/>
+            <text class="d-lbl-a" x="218" y="149" text-anchor="middle" font-size="11">events + clock + rng</text>
+            <text class="d-lbl-s" x="218" y="176" text-anchor="middle" font-size="10.5">(as data)</text>
+
+            <path class="d-flow-a" d="M534 159 L670 159" marker-end="url(#pa)"/>
+            <text class="d-lbl-a" x="602" y="149" text-anchor="middle" font-size="11">commands</text>
+            <text class="d-lbl-s" x="602" y="176" text-anchor="middle" font-size="10.5">(descriptions)</text>
+
+            <path class="d-flow" d="M690 176 C 690 230, 130 230, 130 176" marker-end="url(#pm)"/>
+            <text class="d-lbl-s" x="410" y="248" text-anchor="middle" font-size="11">shell executes commands &rarr; effects on network / disk / processes</text>
+          </svg>
+        </div>
+        <figcaption><b>Data in, commands out; the shell does the rest.</b> The core decides and returns commands; the shell is the only thing that touches the outside world. Because time and randomness enter as arguments, a decision can be replayed exactly in a test with no network, disk, or clock.</figcaption>
+      </figure>
+
+      <div class="note"><span class="nt"><b>Why it's worth it here.</b> The decisions in Swarm &mdash; when a cell splits, where a task lands, whether a quorum agrees, how a barrier steps &mdash; are the parts most likely to be subtly wrong and hardest to reproduce through live I/O. As pure functions they get exhaustive unit tests; the thin shell needs only a handful of integration tests.</span></div>
+    </div>
+  </section>
+
+  <!-- 02 READING KEY -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>How to read each component</h2></div>
+    <div class="sec-body">
+      <p class="measure">Every component below is specified the same way, so the core/shell boundary is explicit and implementable:</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Field</th><th>What it gives you</th></tr></thead>
+        <tbody>
+          <tr><td><b>Responsibility</b></td><td>the one job this component owns</td></tr>
+          <tr><td><b>Functional core</b></td><td>the pure functions, with input/output types &mdash; the decisions, in signature form</td></tr>
+          <tr><td><b>Imperative shell</b></td><td>the I/O it performs and the run loop that feeds the core and executes its commands</td></tr>
+          <tr><td><b>Boundary types</b></td><td>the plain data that crosses between core and shell</td></tr>
+        </tbody>
+      </table></div>
+      <p class="measure">Signatures are written in a Go-flavored pseudocode; sum types (e.g. <code>Split | Merge | None</code>) are shown as tagged unions. Go packages hold the shells and the pure cores side by side (a <code>core</code> package that imports no <code>net</code>/<code>os</code>); Rust carries the hot-path cores in later phases.</p>
+    </div>
+  </section>
+
+  <!-- 03 DATA MODEL -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>Shared data model</h2></div>
+    <div class="sec-body">
+      <p class="measure">The types that cross component and core/shell boundaries. They are plain data &mdash; no methods that do I/O &mdash; so the core can take and return them freely.</p>
+      <div class="code-card">
+        <div class="code-top"><span class="fn">core/model.go — boundary types</span></div>
+<pre><span class="kw">type</span> JobSpec    <span class="kw">struct</span> { ID JobID; Template <span class="ty">string</span>; Coupling <span class="ty">Coupling</span>; Params <span class="ty">map</span>[<span class="ty">string</span>]<span class="ty">any</span> }
+<span class="kw">type</span> Task       <span class="kw">struct</span> { ID TaskID; JobID JobID; Input <span class="ty">[]byte</span>; Attempt <span class="ty">int</span> }
+<span class="kw">type</span> TaskResult <span class="kw">struct</span> { TaskID TaskID; Output <span class="ty">[]byte</span>; OK <span class="ty">bool</span> }
+<span class="kw">type</span> Aggregate  <span class="kw">struct</span> { JobID JobID; Value <span class="ty">[]byte</span>; Done <span class="ty">bool</span> }
+
+<span class="cm">// what the planner/mitosis reason over — snapshots, not live handles</span>
+<span class="kw">type</span> CellView   <span class="kw">struct</span> { ID CellID; Size <span class="ty">int</span>; Free <span class="ty">int</span>; Caps <span class="ty">CapSet</span> }
+<span class="kw">type</span> Instant    <span class="ty">int64</span>   <span class="cm">// monotonic ns, supplied by the shell</span>
+
+<span class="cm">// P0 coupling is always Independent; the field exists for later phases</span>
+<span class="kw">type</span> Coupling   <span class="kw">int</span>     <span class="cm">// Independent | Barrier | Leader | MessagePassing</span></pre>
+      </div>
+      <div class="note"><span class="nt"><b>Commands are data too.</b> Each core returns a slice of command values (e.g. <code>Dispatch</code>, <code>SplitCell</code>, <code>Dial</code>) that the shell pattern-matches and executes. A core that returns commands instead of calling them is what makes it pure &mdash; and what lets a test assert on the commands without anything actually happening.</span></div>
+    </div>
+  </section>
+
+  <!-- 04 SYSTEM MAP -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>P0 system map</h2></div>
+    <div class="sec-body">
+      <p class="measure">P0 is one region, trusted machines, native execution, the <code>independent</code> driver only. Five moving parts: the CLI, the control plane (planner, registry, rendezvous, mitosis), and the agent &mdash; over a cell that is just a pull queue plus gossip membership.</p>
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 320" role="img" aria-label="The CLI submits jobs to the control plane, whose planner decomposes them into tasks and enqueues them on a cell. Agents dial the rendezvous to join a cell, then pull tasks from its queue, execute them natively, and report results. The mitosis controller splits and merges cells by size.">
+            <defs>
+              <marker id="sm" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+              <marker id="sa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+            </defs>
+            <rect class="d-box" x="34" y="130" width="120" height="56" rx="10"/>
+            <text class="d-lbl" x="94" y="155" text-anchor="middle" font-weight="600">CLI</text>
+            <text class="d-lbl-s" x="94" y="172" text-anchor="middle" font-size="11">submit · ps</text>
+
+            <path class="d-flow-a" d="M154 158 L204 158" marker-end="url(#sa)"/>
+            <text class="d-lbl-s" x="179" y="148" text-anchor="middle" font-size="10">submit</text>
+
+            <rect class="d-plane" x="206" y="60" width="250" height="200" rx="13"/>
+            <text class="d-lbl-p" x="226" y="84" font-weight="600" font-size="12">CONTROL PLANE</text>
+            <rect class="d-box" x="224" y="96" width="214" height="34" rx="8"/>
+            <text class="d-lbl-s" x="331" y="118" text-anchor="middle" font-size="11">Planner · admission + decompose</text>
+            <rect class="d-box" x="224" y="136" width="214" height="34" rx="8"/>
+            <text class="d-lbl-s" x="331" y="158" text-anchor="middle" font-size="11">Cell registry</text>
+            <rect class="d-box" x="224" y="176" width="214" height="34" rx="8"/>
+            <text class="d-lbl-s" x="331" y="198" text-anchor="middle" font-size="11">Rendezvous</text>
+            <rect class="d-box" x="224" y="216" width="214" height="34" rx="8"/>
+            <text class="d-lbl-s" x="331" y="238" text-anchor="middle" font-size="11">Mitosis controller</text>
+
+            <rect class="d-core" x="530" y="88" width="150" height="90" rx="12"/>
+            <text class="d-lbl-a" x="605" y="120" text-anchor="middle" font-weight="600" font-size="12">CELL</text>
+            <text class="d-lbl-s" x="605" y="140" text-anchor="middle" font-size="11">pull queue</text>
+            <text class="d-lbl-s" x="605" y="156" text-anchor="middle" font-size="11">+ gossip membership</text>
+
+            <path class="d-flow-a" d="M456 120 L526 120" marker-end="url(#sa)"/>
+            <text class="d-lbl-s" x="491" y="110" text-anchor="middle" font-size="10">enqueue</text>
+            <path class="d-flow" d="M456 233 C 500 233, 520 190, 528 176" marker-end="url(#sm)"/>
+            <text class="d-lbl-s" x="505" y="225" text-anchor="middle" font-size="10">split/merge</text>
+
+            <rect class="d-box" x="740" y="70" width="128" height="50" rx="10"/>
+            <text class="d-lbl-s" x="804" y="99" text-anchor="middle" font-size="11">agent</text>
+            <rect class="d-box" x="740" y="132" width="128" height="50" rx="10"/>
+            <text class="d-lbl-s" x="804" y="161" text-anchor="middle" font-size="11">agent</text>
+            <rect class="d-box" x="740" y="194" width="128" height="50" rx="10"/>
+            <text class="d-lbl-s" x="804" y="223" text-anchor="middle" font-size="11">agent</text>
+
+            <path class="d-flow" d="M738 95 C 700 110, 690 120, 682 128" marker-end="url(#sm)"/>
+            <path class="d-flow" d="M738 157 L684 145" marker-end="url(#sm)"/>
+            <text class="d-lbl-s" x="712" y="196" text-anchor="middle" font-size="10">pull · report</text>
+
+            <path class="d-flow-a" d="M740 219 C 560 250, 470 250, 456 210" marker-end="url(#sa)"/>
+            <text class="d-lbl-s" x="600" y="268" text-anchor="middle" font-size="10.5">agents dial the rendezvous to join a cell</text>
+          </svg>
+        </div>
+        <figcaption><b>Submit flows left-to-right; agents dial in from the right.</b> The control plane plans and places; the cell holds the queue; agents self-register, pull, execute, and report. The mitosis controller only watches cell sizes and issues split/merge.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 05 COMPONENTS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>Components</h2></div>
+    <div class="sec-body">
+
+      <!-- CLI -->
+      <div class="component">
+        <div class="cmp-name"><h3>CLI</h3><span class="cmp-tag">client</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — turn a user command into a control-plane request and render the reply.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> parse(argv <span class="ty">[]string</span>) (Command, <span class="ty">error</span>)
+<span class="kw">func</span> validate(spec JobSpec) <span class="ty">error</span>
+<span class="kw">func</span> render(reply Reply) <span class="ty">string</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>read <code>argv</code>, env, and any job file</li>
+              <li>open the gRPC channel, send the request</li>
+              <li>stream/print the rendered output to the terminal</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — <code>Command</code>, <code>JobSpec</code> in; <code>Reply</code> out. The core never opens a socket; it only decides what to send and how to show the answer.</p>
+      </div>
+
+      <!-- PLANNER -->
+      <div class="component">
+        <div class="cmp-name"><h3>Planner &amp; admission</h3><span class="cmp-tag">control plane</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — accept or reject a job, decompose it into tasks, and decide which cell each task goes to.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> admit(spec JobSpec) (<span class="ty">[]Task</span>, Reject)
+  <span class="cm">// validates, then calls the template's decompose()</span>
+<span class="kw">func</span> place(t Task, cells <span class="ty">[]CellView</span>) Placement
+  <span class="cm">// Placement = Assign{CellID} | NoCapacity</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>receive the <code>Submit</code> RPC</li>
+              <li>persist job + tasks to the store</li>
+              <li>enqueue each placed task on its cell</li>
+              <li>on <code>NoCapacity</code>, hold and retry on the next registry tick</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — <code>JobSpec</code> + <code>[]CellView</code> snapshot in; <code>[]Task</code> + <code>Placement</code> decisions out. Placement in P0 is "any cell with free capacity," so it's a pure function of the snapshot.</p>
+      </div>
+
+      <!-- REGISTRY -->
+      <div class="component">
+        <div class="cmp-name"><h3>Cell registry</h3><span class="cmp-tag">control plane</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — hold the authoritative set of cells and their capacities, updated from membership events.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> apply(reg Registry, ev RegistryEvent) (Registry, <span class="ty">[]Change</span>)
+  <span class="cm">// ev = CellUp | CellDown | CapacityChanged | AgentJoined | AgentLeft</span>
+<span class="kw">func</span> snapshot(reg Registry) <span class="ty">[]CellView</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>subscribe to gossip / rendezvous events</li>
+              <li>call <code>apply</code>, persist the new <code>Registry</code></li>
+              <li>publish <code>snapshot()</code> for the planner and mitosis to read</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — <code>RegistryEvent</code> in; next <code>Registry</code> + <code>[]Change</code> out. The registry value is immutable data; the shell swaps the stored pointer.</p>
+      </div>
+
+      <!-- RENDEZVOUS -->
+      <div class="component">
+        <div class="cmp-name"><h3>Rendezvous</h3><span class="cmp-tag">control plane</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — accept agents that dial in, admit them, and assign each to a cell.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> admitAgent(req JoinReq, reg <span class="ty">[]CellView</span>) AdmitDecision
+  <span class="cm">// AdmitDecision = Accept{CellID} | Reject{reason} | NewCell</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>terminate the agent's mTLS dial-out (gRPC stream)</li>
+              <li>call <code>admitAgent</code> with a registry snapshot</li>
+              <li>on <code>Accept</code>, wire the agent into the cell's gossip</li>
+              <li>emit an <code>AgentJoined</code> event to the registry</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — <code>JoinReq</code> + snapshot in; <code>AdmitDecision</code> out. Whether to open a new cell (first agent) or slot into an existing one is a pure call.</p>
+      </div>
+
+      <!-- MITOSIS -->
+      <div class="component">
+        <div class="cmp-name"><h3>Mitosis controller</h3><span class="cmp-tag">control plane</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — decide when a cell splits or two merge. In P0 (independent jobs) resize is safe any time, so this is the whole differentiator in its simplest form.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> decide(cells <span class="ty">[]CellView</span>, cfg Thresholds,
+            cooldowns <span class="ty">map</span>[CellID]Instant,
+            now Instant) <span class="ty">[]Mitosis</span>
+  <span class="cm">// Mitosis = Split{CellID} | Merge{a,b CellID} | None</span>
+  <span class="cm">// split when Size &gt; 2T; merge two neighbors &lt; T;</span>
+  <span class="cm">// suppress if now-cooldown[id] &lt; window</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>read the registry snapshot + clock on a timer</li>
+              <li>call <code>decide</code></li>
+              <li>execute <code>Split</code>/<code>Merge</code>: reconfigure cells, reassign agents, stamp cooldowns</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — sizes, thresholds, cooldowns, and <code>now</code> in; a list of <code>Mitosis</code> commands out. Every split/merge rule (the 2T band, cooldown, sustained window) is unit-tested with hand-built snapshots and a fake clock &mdash; no cluster required.</p>
+      </div>
+
+      <!-- AGENT: REGISTRATION -->
+      <div class="component">
+        <div class="cmp-name"><h3>Agent · registration &amp; reconnect</h3><span class="cmp-tag">agent</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — get and stay joined: dial out, enroll once, join a cell, heartbeat, and resume the loop on any drop.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> step(s RegState, ev RegEvent,
+          now Instant, jitter <span class="ty">float64</span>) (RegState, <span class="ty">[]RegCmd</span>)
+  <span class="cm">// RegState = Dialing | Enrolling | Joining | Member</span>
+  <span class="cm">// RegEvent = DialOK | DialFail | Enrolled | Joined</span>
+  <span class="cm">//          | ConnLost | Tick</span>
+  <span class="cm">// RegCmd   = Dial{region} | Enroll | JoinCell</span>
+  <span class="cm">//          | Heartbeat | Wait{d} | Failover</span>
+<span class="kw">func</span> backoff(attempt <span class="ty">int</span>, cfg BackoffCfg,
+             jitter <span class="ty">float64</span>) Duration</pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>perform <code>Dial</code>/<code>Enroll</code>/<code>Heartbeat</code> over mTLS gRPC</li>
+              <li>read the clock; draw the <code>jitter</code> and pass it in</li>
+              <li>run <code>Wait</code> timers; detect dropped connections → <code>ConnLost</code></li>
+              <li>hold the SPIFFE identity across reconnects</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — <code>(state, event, now, jitter)</code> in; <code>(next state, commands)</code> out. The retry-forever + failover behavior is a pure state machine, so "connection lost while a Member → dial again, keep identity" is a two-line test.</p>
+      </div>
+
+      <!-- AGENT: TASK RUNNER -->
+      <div class="component">
+        <div class="cmp-name"><h3>Agent · task runner</h3><span class="cmp-tag">agent</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — pull a task, run it natively, report the result; re-pull when idle.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> step(s RunState, ev RunEvent) (RunState, <span class="ty">[]RunCmd</span>)
+  <span class="cm">// RunEvent = Idle | Pulled{task} | Done{result} | Failed</span>
+  <span class="cm">// RunCmd   = Pull | Execute{task} | Report{result}</span>
+  <span class="cm">//          | ReQueue{task}</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li><code>Pull</code> from the cell queue over gRPC</li>
+              <li><code>Execute</code>: spawn the native process, capture output</li>
+              <li><code>Report</code> the <code>TaskResult</code> back</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — <code>RunEvent</code> in; <code>RunCmd</code> out. Membership itself lives in the shell (the <code>memberlist</code>/SWIM library); the pure part is <code>reconcile(view, events) → (view, changes)</code>, how gossip events become a cell view.</p>
+      </div>
+
+      <!-- TEMPLATES -->
+      <div class="component">
+        <div class="cmp-name"><h3>Templates · keyspace-search, monte-carlo</h3><span class="cmp-tag">pure logic</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — split a job into independent tasks and merge their results. Templates are the purest illustration of the pattern: <em>all core, no shell.</em></p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="cm">// keyspace-search</span>
+<span class="kw">func</span> decompose(j KeyspaceJob) <span class="ty">[]Task</span>   <span class="cm">// split range</span>
+<span class="kw">func</span> merge(rs <span class="ty">[]TaskResult</span>) Aggregate  <span class="cm">// first-hit</span>
+
+<span class="cm">// monte-carlo</span>
+<span class="kw">func</span> decompose(j MCJob) <span class="ty">[]Task</span>         <span class="cm">// seed blocks</span>
+<span class="kw">func</span> merge(rs <span class="ty">[]TaskResult</span>) Aggregate  <span class="cm">// sum · stats</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li><em>none.</em> Templates are pure functions the planner (<code>decompose</code>) and the job tracker (<code>merge</code>) call.</li>
+              <li>The workload binary they describe is what the agent's shell executes.</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — a typed job in; <code>[]Task</code> or an <code>Aggregate</code> out. A new template is a new pair of pure functions registered by name &mdash; no shell to touch.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 06 TESTING & DEFERRED -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>What this buys, and what P0 defers</h2></div>
+    <div class="sec-body">
+      <p class="measure">The payoff is a testing split that matches the risk. The <strong>cores</strong> &mdash; mitosis, placement, admission, the two agent state machines, the templates &mdash; get exhaustive table-driven unit tests with hand-built inputs and a fake clock, because they're pure. The <strong>shells</strong> are thin enough to cover with a handful of integration tests: a real dial-out, a real pull, a real split executed against a live registry.</p>
+      <div class="note"><span class="nt"><b>Deferred by design (later phases keep the same boundary).</b> Checkpointing and the barrier/leader/message-passing drivers (P2), multi-region and the regional control plane (P1), WASM sandboxing and quorum/reputation verification (P3) all slot in as new cores (decisions) and new shell actions &mdash; they don't move the FCIS line, they extend it. The <code>Coupling</code> field is already in the model so P2 has nothing to retrofit.</span></div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot-inner">
+      <span>Swarm · P0 component design</span>
+      <span>functional core = decisions · imperative shell = I/O</span>
+    </div>
+  </footer>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swarm P6 Components</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bg:#F1F4F3; --surface:#FFFFFF; --surface-2:#F7F9F8; --ink:#14201D; --muted:#566964;
+    --line:#DCE4E1; --line-2:#C5D1CD; --accent:#0E8F84; --accent-sf:#0e8f8416;
+    --plane:#3B5B8C; --plane-sf:#3b5b8c14; --good:#2E8256; --warn:#B26F13; --crit:#BC4130;
+    --shadow:0 1px 2px #14201d0c, 0 8px 24px -12px #14201d1f;
+  }
+  :root:not([data-theme="light"]) { @media (prefers-color-scheme: dark) {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  } }
+  :root[data-theme="dark"] {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--bg); color:var(--ink); font-family:"IBM Plex Sans",system-ui,sans-serif;
+    font-size:17px; line-height:1.62; margin:0; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1040px; margin:0 auto; padding:0 24px; }
+  .measure { max-width:720px; }
+
+  header.masthead { border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--surface-2),var(--bg)); }
+  .masthead-inner { padding:26px 24px 22px; max-width:1040px; margin:0 auto;
+    display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+  .brand { display:flex; align-items:center; gap:13px; }
+  .glyph { width:38px; height:38px; flex:none; color:var(--accent); }
+  .brand-text { display:flex; flex-direction:column; line-height:1.1; }
+  .brand-name { font-weight:700; font-size:20px; letter-spacing:-0.02em; }
+  .brand-sub { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    letter-spacing:0.02em; margin-top:3px; }
+  .masthead-meta { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    text-align:right; line-height:1.7; }
+  .masthead-meta b { color:var(--ink); font-weight:600; }
+
+  .hero { padding:56px 0 26px; }
+  .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-weight:500;
+    letter-spacing:0.16em; text-transform:uppercase; color:var(--accent);
+    display:flex; align-items:center; gap:10px; }
+  .eyebrow::before { content:""; width:26px; height:1px; background:var(--accent); display:inline-block; }
+  h1 { font-size:clamp(32px,5.4vw,48px); line-height:1.04; letter-spacing:-0.033em; font-weight:700;
+    margin:20px 0 0; text-wrap:balance; max-width:16ch; }
+  .lede { font-size:clamp(17px,2.3vw,20px); color:var(--muted); margin:22px 0 0; max-width:52ch;
+    text-wrap:pretty; }
+  .lede b { color:var(--ink); font-weight:600; }
+
+  section { padding:38px 0; border-top:1px solid var(--line); margin-top:36px; }
+  .sec-head { display:flex; gap:18px; align-items:baseline; margin-bottom:8px; }
+  .sec-num { font-family:"IBM Plex Mono",monospace; font-size:14px; font-weight:600; color:var(--accent);
+    flex:none; padding-top:4px; }
+  h2 { font-size:clamp(23px,3.4vw,31px); letter-spacing:-0.025em; font-weight:700; margin:0;
+    text-wrap:balance; line-height:1.12; }
+  h3 { font-size:19px; letter-spacing:-0.01em; font-weight:600; margin:0 0 4px; }
+  p { margin:14px 0; }
+  .sec-body { padding-left:0; }
+  @media (min-width:720px){ .sec-body { padding-left:47px; } }
+  strong { font-weight:600; }
+  code,.mono { font-family:"IBM Plex Mono",monospace; font-size:0.88em; }
+  p code,li code { background:var(--accent-sf); color:var(--ink); padding:1px 6px; border-radius:5px;
+    font-size:0.83em; }
+
+  figure { margin:28px 0 8px; }
+  .figframe { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:26px 24px 18px; box-shadow:var(--shadow); overflow-x:auto; }
+  figcaption { font-size:14px; color:var(--muted); margin-top:14px; line-height:1.5; max-width:68ch; }
+  figcaption b { color:var(--ink); font-weight:600; }
+  svg { display:block; max-width:100%; height:auto; }
+  svg text { font-family:"IBM Plex Mono",monospace; }
+  .d-box { fill:var(--surface-2); stroke:var(--line-2); stroke-width:1.5; }
+  .d-core { fill:var(--accent-sf); stroke:var(--accent); stroke-width:1.6; }
+  .d-lbl { fill:var(--ink); font-size:13px; font-weight:500; }
+  .d-lbl-s { fill:var(--muted); font-size:11.5px; }
+  .d-lbl-a { fill:var(--accent); font-size:11.5px; font-weight:600; }
+  .d-flow { stroke:var(--muted); stroke-width:1.6; fill:none; }
+  .d-flow-a { stroke:var(--accent); stroke-width:1.8; fill:none; }
+  .d-dash { stroke:var(--muted); stroke-width:1.5; fill:none; stroke-dasharray:5 4; }
+
+  .code-card { background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    overflow:hidden; box-shadow:var(--shadow); margin:16px 0; }
+  .code-top { display:flex; align-items:center; gap:8px; padding:9px 15px; border-bottom:1px solid var(--line);
+    background:var(--surface-2); }
+  .code-top .fn { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  pre { margin:0; padding:16px 18px; overflow-x:auto; font-family:"IBM Plex Mono",monospace;
+    font-size:13px; line-height:1.65; color:var(--ink); }
+  .ty { color:var(--accent); }
+  .kw { color:var(--plane); }
+  .cm { color:var(--muted); }
+
+  .component { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:22px 22px 18px; box-shadow:var(--shadow); margin:18px 0; }
+  .component > .cmp-resp { margin:6px 0 0; color:var(--muted); font-size:15px; }
+  .component > .cmp-resp b { color:var(--ink); }
+  .cmp-name { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .cmp-tag { font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.07em; color:var(--muted); border:1px solid var(--line-2); border-radius:20px;
+    padding:2px 9px; }
+  .cmp-tag.delta { color:var(--warn); border-color:var(--warn); }
+  .fcis-split { display:grid; grid-template-columns:1fr; gap:14px; margin-top:16px; }
+  @media (min-width:760px){ .fcis-split { grid-template-columns:1fr 1fr; } }
+  .fcis-core, .fcis-shell { border-radius:12px; padding:14px 15px; }
+  .fcis-core { background:var(--accent-sf); border:1px solid var(--accent); }
+  .fcis-shell { background:var(--surface-2); border:1px solid var(--line-2); }
+  .fcis-head { font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px; display:flex; gap:7px; align-items:center; }
+  .fcis-core .fcis-head { color:var(--accent); }
+  .fcis-shell .fcis-head { color:var(--muted); }
+  .fcis-core pre { background:transparent; padding:2px 0; font-size:12.5px; }
+  .fcis-shell ul { margin:0; padding-left:17px; }
+  .fcis-shell li { font-size:13.5px; color:var(--ink); line-height:1.5; margin:3px 0; }
+  .boundary { margin-top:14px; font-size:13.5px; color:var(--muted); }
+  .boundary b { color:var(--ink); font-weight:600; }
+
+  .tbl-wrap { overflow-x:auto; margin:20px 0; border:1px solid var(--line); border-radius:12px;
+    box-shadow:var(--shadow); }
+  table { border-collapse:collapse; width:100%; font-size:13.5px; min-width:560px; }
+  th,td { text-align:left; padding:12px 15px; border-bottom:1px solid var(--line); vertical-align:top; }
+  thead th { font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.07em; color:var(--muted); font-weight:500; background:var(--surface-2); }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr { background:var(--surface); }
+  td.mono,td .m { font-family:"IBM Plex Mono",monospace; }
+  td .ph { font-family:"IBM Plex Mono",monospace; font-weight:600; color:var(--accent); }
+
+  .note { display:flex; gap:13px; align-items:flex-start; background:var(--surface); border:1px solid var(--line);
+    border-left:3px solid var(--accent); border-radius:10px; padding:15px 17px; box-shadow:var(--shadow);
+    margin:18px 0; }
+  .note .nt { font-size:14.5px; line-height:1.55; }
+  .note .nt b { font-weight:600; }
+
+  .finale { background:linear-gradient(180deg,var(--accent-sf),transparent); border:1px solid var(--accent);
+    border-radius:16px; padding:26px 26px; margin:24px 0 0; box-shadow:var(--shadow); }
+  .finale h3 { color:var(--accent); font-size:17px; margin:0 0 8px; }
+  .finale p { margin:0; font-size:16px; line-height:1.6; }
+  .finale p b { font-weight:600; }
+
+  footer { border-top:1px solid var(--line); margin-top:52px; padding:28px 0 56px; }
+  .foot-inner { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+</style>
+</head>
+<body>
+
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand">
+      <svg class="glyph" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <circle cx="20" cy="20" r="15.5" stroke="currentColor" stroke-width="1.6" opacity="0.5"/>
+        <path d="M20 20 m0 -15.5 a15.5 15.5 0 0 1 13.4 7.75" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+        <circle cx="20" cy="20" r="4" fill="currentColor"/>
+        <path d="M20 20 L28 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">Swarm · P6</span>
+        <span class="brand-sub">component design · self-tuning + full-scale GA</span>
+      </div>
+    </div>
+    <div class="masthead-meta">
+      <div>phase 6 of 6</div>
+      <div><b>the loop closes</b></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero measure">
+    <div class="eyebrow">Component Design · Phase 6</div>
+    <h1>Self-tuning, and the loop closes.</h1>
+    <p class="lede">P6 writes the last cores &mdash; mitosis that splits on a <b>measured signal</b> (the brief §03 upgrade), capability/locality placement refinement (short of a solver), and a matured reputation model &mdash; then validates a sustained run at a million nodes. Self-tuning turns out to be the same pure decision with a better input. From two machines to a million, the FCIS boundary never moved.</p>
+  </div>
+
+  <!-- 01 SELF-TUNING -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>Self-tuning is the same core, better input</h2></div>
+    <div class="sec-body">
+      <p class="measure">Back in P0, mitosis split a cell when its <em>size</em> crossed 2T &mdash; a count as a proxy for "coordination is getting slow." P6 delivers the graduation the brief §03 promised: split when the <strong>measured signal</strong> (barrier-completion p99, queue latency) actually crosses the SLO. The elegant part &mdash; and the whole thesis of this series in one move &mdash; is that <code>decide</code> keeps its exact shape. The trigger gets a richer <em>input</em>, fed by P4's observability rollups; the pure function and its <code>[]Mitosis</code> output are unchanged.</p>
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 820 236" role="img" aria-label="The mitosis decide core, unchanged in shape, takes either a size count (P0 to P5) or a measured p99 signal (P6) as input and returns the same list of Split, Merge, or None commands. The signal is fed from P4 observability rollups.">
+            <defs>
+              <marker id="pa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+              <marker id="pm" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+            </defs>
+            <rect x="40" y="44" width="200" height="42" rx="9" fill="none" stroke="var(--line-2)" stroke-width="1.4" stroke-dasharray="4 4"/>
+            <text x="140" y="63" text-anchor="middle" fill="var(--muted)" font-size="12">size count</text>
+            <text x="140" y="79" text-anchor="middle" fill="var(--muted)" font-size="10.5">P0–P5 · split at 2T</text>
+            <rect class="d-core" x="40" y="150" width="200" height="42" rx="9"/>
+            <text class="d-lbl-a" x="140" y="169" text-anchor="middle" font-size="12">measured p99 vs SLO</text>
+            <text x="140" y="185" text-anchor="middle" fill="var(--muted)" font-size="10.5">P6 · from rollups</text>
+
+            <path class="d-flow" d="M240 65 L316 100" marker-end="url(#pm)"/>
+            <path class="d-flow-a" d="M240 171 L316 132" marker-end="url(#pa)"/>
+
+            <rect class="d-core" x="318" y="86" width="200" height="60" rx="13"/>
+            <text class="d-lbl-a" x="418" y="112" text-anchor="middle" font-weight="600" font-size="13">mitosis.decide</text>
+            <text class="d-lbl-s" x="418" y="130" text-anchor="middle">same pure shape · P0 → P6</text>
+
+            <path class="d-flow-a" d="M518 116 L590 116" marker-end="url(#pa)"/>
+            <rect class="d-box" x="592" y="90" width="180" height="52" rx="11"/>
+            <text class="d-lbl" x="682" y="112" text-anchor="middle" font-size="12">[]Mitosis</text>
+            <text class="d-lbl-s" x="682" y="129" text-anchor="middle" font-size="10.5">Split | Merge | None</text>
+
+            <text class="d-lbl-s" x="410" y="218" text-anchor="middle" font-size="11">a count is just one signal — signal-based subsumes count-based</text>
+          </svg>
+        </div>
+        <figcaption><b>The differentiator, self-tuned, with no new machinery.</b> Because a count is just one kind of signal, the signal-based trigger subsumes the count-based one &mdash; P0's mitosis tests still pass, and P6 only adds tests for the new signal path. The cell that divides now divides on real latency, not a proxy.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 02 COMPONENTS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>The last cores</h2></div>
+    <div class="sec-body">
+
+      <!-- SIGNAL MITOSIS -->
+      <div class="component">
+        <div class="cmp-name"><h3>Signal-based adaptive mitosis</h3><span class="cmp-tag delta">mitosis · §03 upgrade</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — split on a measured signal crossing the SLO, not just a size count. Same pure <code>decide</code> shape; the signal is an input the shell supplies from P4's rollups.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> decide(cells <span class="ty">[]CellSignal</span>, cfg SignalThresholds,
+            cooldowns <span class="ty">map</span>[CellID]Instant, now Instant) <span class="ty">[]Mitosis</span>
+  <span class="cm">// CellSignal = { size int; p99 Duration; tput float }</span>
+  <span class="cm">// split when p99 &gt; slo(coupling); merge when well under</span>
+<span class="kw">func</span> signalThreshold(c Coupling, slo SLO) Threshold</pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>feed the measured signal from observability rollups (P4)</li>
+              <li>execute <code>Split</code>/<code>Merge</code> exactly as before (unchanged since P0/P2)</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — cell signals + thresholds + clock in; <code>[]Mitosis</code> out. Signal-based subsumes count-based, so P0's mitosis tests still pass and only the signal path is new &mdash; the differentiator, self-tuned, with no new machinery.</p>
+      </div>
+
+      <!-- PLACEMENT REFINEMENT -->
+      <div class="component">
+        <div class="cmp-name"><h3>Capability/locality placement refinement</h3><span class="cmp-tag delta">placement · delta</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — prefer machines by capability match and network locality (rack / AZ / region distance). A bounded, single-pass ranking &mdash; explicitly not a solver (brief §18).</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> rank(t Task, cands <span class="ty">[]CellView</span>,
+          loc LocalityGraph) <span class="ty">[]Ranked</span>
+  <span class="cm">// greedy best-fit: capability match + locality distance</span>
+<span class="kw">func</span> bestFit(t Task, cands <span class="ty">[]CellView</span>,
+             loc LocalityGraph) Placement</pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>gather candidate snapshots + the locality graph</li>
+              <li>dispatch to the top-ranked cell</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — task + candidates + locality in; a ranked list / a placement out. A one-pass greedy pick that provably terminates &mdash; no iterative optimization, honoring §18's "no heavy solver." Extends P0's <code>place</code> and P1's <code>placeAcross</code> without changing their callers.</p>
+      </div>
+
+      <!-- REPUTATION MATURITY -->
+      <div class="component">
+        <div class="cmp-name"><h3>Reputation maturity</h3><span class="cmp-tag delta">verification · delta</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — mature P3's reputation with time-decay (stale trust fades) and tiered thresholds (faster convergence for consistent contributors). Still pure <code>update</code>/<code>weight</code>, now with decay and tiers.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> decay(rep Reputation, elapsed Duration) Reputation
+  <span class="cm">// stale reputation fades toward zero</span>
+<span class="kw">func</span> tier(rep Reputation) RepTier   <span class="cm">// verification bucket</span>
+<span class="cm">// P3's update / weight unchanged</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>run a periodic decay pass</li>
+              <li>persist the reputation store</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — reputation + elapsed in; a decayed reputation / a tier out. Decay stops a once-good machine from coasting forever; the tests are P3's property style (monotonic on honest work, fades on absence).</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 03 REALIZED -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>The design realized</h2></div>
+    <div class="sec-body">
+      <p class="measure">With the last cores written, the sustained run at ~1M nodes &mdash; self-tuning on, all six phases composed &mdash; is the final GA gate. And the map below is the whole point of having held the line: <strong>every phase added pure decision cores and thin shells, and the boundary never moved.</strong> This is the functional core of Swarm, entire:</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Phase</th><th>Pure decision cores added</th></tr></thead>
+        <tbody>
+          <tr><td><span class="ph">P0</span></td><td class="m">admit · place · decide(mitosis) · registration step · run step · template decompose/merge</td></tr>
+          <tr><td><span class="ph">P1</span></td><td class="m">route · mergeGlobal · placeAcross · selectRegion · summarize</td></tr>
+          <tr><td><span class="ph">P2</span></td><td class="m">driver step (barrier/leader/message) · resume · checkpoint due/snapshot/restore · mitosis gate · admitGang · deadline/isDead</td></tr>
+          <tr><td><span class="ph">P3</span></td><td class="m">grants · verifyModule · assign · verdict · reputation update/weight · shouldProbe/check · admitOpen · verifySignature</td></tr>
+          <tr><td><span class="ph">P4</span></td><td class="m">shardOf · rollup · admitUnderLoad · nextDrain · skewSafe</td></tr>
+          <tr><td><span class="ph">P5</span></td><td class="m">withinQuota · nextFair · recoveryPlan · evaluate/shouldAlert · verifyAttestation</td></tr>
+          <tr><td><span class="ph">P6</span></td><td class="m">signal-based decide · rank/bestFit · decay/tier</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="finale">
+        <h3>From two machines to a million</h3>
+        <p>Every decision in Swarm &mdash; when a cell divides, where a task lands, whether a quorum agrees, how a barrier steps, when to page, what to recover &mdash; is a <b>pure function</b> you can read and test in isolation. Every effect &mdash; gossip, gRPC, WASM, FoundationDB, a GPU all-reduce &mdash; lives in a <b>thin shell</b> that gathers inputs and carries decisions out. The swarm scaled across six phases and five orders of magnitude, and the line between the two never had to move. That is the design, realized.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot-inner">
+      <span>Swarm · P6 component design · series complete</span>
+      <span>every decision pure · every effect in a shell</span>
+    </div>
+  </footer>
+
+</div>
+
+</body>
+</html>

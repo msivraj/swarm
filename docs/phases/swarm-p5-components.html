@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swarm P5 Components</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bg:#F1F4F3; --surface:#FFFFFF; --surface-2:#F7F9F8; --ink:#14201D; --muted:#566964;
+    --line:#DCE4E1; --line-2:#C5D1CD; --accent:#0E8F84; --accent-sf:#0e8f8416;
+    --plane:#3B5B8C; --plane-sf:#3b5b8c14; --good:#2E8256; --warn:#B26F13; --crit:#BC4130;
+    --shadow:0 1px 2px #14201d0c, 0 8px 24px -12px #14201d1f;
+  }
+  :root:not([data-theme="light"]) { @media (prefers-color-scheme: dark) {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  } }
+  :root[data-theme="dark"] {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--bg); color:var(--ink); font-family:"IBM Plex Sans",system-ui,sans-serif;
+    font-size:17px; line-height:1.62; margin:0; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1040px; margin:0 auto; padding:0 24px; }
+  .measure { max-width:720px; }
+
+  header.masthead { border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--surface-2),var(--bg)); }
+  .masthead-inner { padding:26px 24px 22px; max-width:1040px; margin:0 auto;
+    display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+  .brand { display:flex; align-items:center; gap:13px; }
+  .glyph { width:38px; height:38px; flex:none; color:var(--accent); }
+  .brand-text { display:flex; flex-direction:column; line-height:1.1; }
+  .brand-name { font-weight:700; font-size:20px; letter-spacing:-0.02em; }
+  .brand-sub { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    letter-spacing:0.02em; margin-top:3px; }
+  .masthead-meta { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    text-align:right; line-height:1.7; }
+  .masthead-meta b { color:var(--ink); font-weight:600; }
+
+  .hero { padding:56px 0 26px; }
+  .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-weight:500;
+    letter-spacing:0.16em; text-transform:uppercase; color:var(--accent);
+    display:flex; align-items:center; gap:10px; }
+  .eyebrow::before { content:""; width:26px; height:1px; background:var(--accent); display:inline-block; }
+  h1 { font-size:clamp(32px,5.4vw,48px); line-height:1.04; letter-spacing:-0.033em; font-weight:700;
+    margin:20px 0 0; text-wrap:balance; max-width:16ch; }
+  .lede { font-size:clamp(17px,2.3vw,20px); color:var(--muted); margin:22px 0 0; max-width:52ch;
+    text-wrap:pretty; }
+  .lede b { color:var(--ink); font-weight:600; }
+
+  section { padding:38px 0; border-top:1px solid var(--line); margin-top:36px; }
+  .sec-head { display:flex; gap:18px; align-items:baseline; margin-bottom:8px; }
+  .sec-num { font-family:"IBM Plex Mono",monospace; font-size:14px; font-weight:600; color:var(--accent);
+    flex:none; padding-top:4px; }
+  h2 { font-size:clamp(23px,3.4vw,31px); letter-spacing:-0.025em; font-weight:700; margin:0;
+    text-wrap:balance; line-height:1.12; }
+  h3 { font-size:19px; letter-spacing:-0.01em; font-weight:600; margin:0 0 4px; }
+  p { margin:14px 0; }
+  .sec-body { padding-left:0; }
+  @media (min-width:720px){ .sec-body { padding-left:47px; } }
+  strong { font-weight:600; }
+  code,.mono { font-family:"IBM Plex Mono",monospace; font-size:0.88em; }
+  p code,li code { background:var(--accent-sf); color:var(--ink); padding:1px 6px; border-radius:5px;
+    font-size:0.83em; }
+
+  figure { margin:28px 0 8px; }
+  .figframe { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:26px 24px 18px; box-shadow:var(--shadow); overflow-x:auto; }
+  figcaption { font-size:14px; color:var(--muted); margin-top:14px; line-height:1.5; max-width:68ch; }
+  figcaption b { color:var(--ink); font-weight:600; }
+  svg { display:block; max-width:100%; height:auto; }
+  svg text { font-family:"IBM Plex Mono",monospace; }
+  .d-box { fill:var(--surface-2); stroke:var(--line-2); stroke-width:1.5; }
+  .d-core { fill:var(--accent-sf); stroke:var(--accent); stroke-width:1.6; }
+  .d-plane { fill:var(--plane-sf); stroke:var(--plane); stroke-width:1.5; }
+  .d-lbl { fill:var(--ink); font-size:13px; font-weight:500; }
+  .d-lbl-s { fill:var(--muted); font-size:11.5px; }
+  .d-lbl-a { fill:var(--accent); font-size:11.5px; font-weight:600; }
+  .d-flow { stroke:var(--muted); stroke-width:1.6; fill:none; }
+  .d-flow-a { stroke:var(--accent); stroke-width:1.8; fill:none; }
+
+  .code-card { background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    overflow:hidden; box-shadow:var(--shadow); margin:16px 0; }
+  .code-top { display:flex; align-items:center; gap:8px; padding:9px 15px; border-bottom:1px solid var(--line);
+    background:var(--surface-2); }
+  .code-top .fn { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  pre { margin:0; padding:16px 18px; overflow-x:auto; font-family:"IBM Plex Mono",monospace;
+    font-size:13px; line-height:1.65; color:var(--ink); }
+  .ty { color:var(--accent); }
+  .kw { color:var(--plane); }
+  .cm { color:var(--muted); }
+
+  .component { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:22px 22px 18px; box-shadow:var(--shadow); margin:18px 0; }
+  .component > .cmp-resp { margin:6px 0 0; color:var(--muted); font-size:15px; }
+  .component > .cmp-resp b { color:var(--ink); }
+  .cmp-name { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .cmp-tag { font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.07em; color:var(--muted); border:1px solid var(--line-2); border-radius:20px;
+    padding:2px 9px; }
+  .cmp-tag.new { color:var(--accent); border-color:var(--accent); }
+  .cmp-tag.delta { color:var(--warn); border-color:var(--warn); }
+  .fcis-split { display:grid; grid-template-columns:1fr; gap:14px; margin-top:16px; }
+  @media (min-width:760px){ .fcis-split { grid-template-columns:1fr 1fr; } }
+  .fcis-core, .fcis-shell { border-radius:12px; padding:14px 15px; }
+  .fcis-core { background:var(--accent-sf); border:1px solid var(--accent); }
+  .fcis-shell { background:var(--surface-2); border:1px solid var(--line-2); }
+  .fcis-head { font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px; display:flex; gap:7px; align-items:center; }
+  .fcis-core .fcis-head { color:var(--accent); }
+  .fcis-shell .fcis-head { color:var(--muted); }
+  .fcis-core pre { background:transparent; padding:2px 0; font-size:12.5px; }
+  .fcis-shell ul { margin:0; padding-left:17px; }
+  .fcis-shell li { font-size:13.5px; color:var(--ink); line-height:1.5; margin:3px 0; }
+  .boundary { margin-top:14px; font-size:13.5px; color:var(--muted); }
+  .boundary b { color:var(--ink); font-weight:600; }
+
+  .tbl-wrap { overflow-x:auto; margin:20px 0; border:1px solid var(--line); border-radius:12px;
+    box-shadow:var(--shadow); }
+  table { border-collapse:collapse; width:100%; font-size:13.5px; min-width:560px; }
+  th,td { text-align:left; padding:12px 15px; border-bottom:1px solid var(--line); vertical-align:top; }
+  thead th { font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.07em; color:var(--muted); font-weight:500; background:var(--surface-2); }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr { background:var(--surface); }
+  td.mono,td .m { font-family:"IBM Plex Mono",monospace; }
+
+  .note { display:flex; gap:13px; align-items:flex-start; background:var(--surface); border:1px solid var(--line);
+    border-left:3px solid var(--accent); border-radius:10px; padding:15px 17px; box-shadow:var(--shadow);
+    margin:18px 0; }
+  .note .nt { font-size:14.5px; line-height:1.55; }
+  .note .nt b { font-weight:600; }
+
+  footer { border-top:1px solid var(--line); margin-top:52px; padding:28px 0 56px; }
+  .foot-inner { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+</style>
+</head>
+<body>
+
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand">
+      <svg class="glyph" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <rect x="14" y="5" width="12" height="30" rx="6" stroke="currentColor" stroke-width="1.6" opacity="0.55"/>
+        <circle cx="20" cy="12" r="2.6" fill="currentColor"/>
+        <circle cx="20" cy="20" r="2.6" fill="currentColor" opacity="0.55"/>
+        <circle cx="20" cy="28" r="2.6" fill="currentColor" opacity="0.85"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">Swarm · P5</span>
+        <span class="brand-sub">component design · production readiness / GA</span>
+      </div>
+    </div>
+    <div class="masthead-meta">
+      <div>phase 5 of 6</div>
+      <div><b>policy cores</b> · hardened shells</div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero measure">
+    <div class="eyebrow">Component Design · Phase 5</div>
+    <h1>Ready to run for everyone.</h1>
+    <p class="lede">P5 turns a working swarm into a production one &mdash; tenant <b>quotas and fairness</b>, <b>disaster recovery</b>, <b>SLAs</b>, and hardware <b>attestation</b>. Each is a new pure policy decision plus a hardened shell; and because the security-critical logic stays pure, the security audit is tractable.</p>
+  </div>
+
+  <!-- 01 OVERVIEW -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>Production is policy, then hardening</h2></div>
+    <div class="sec-body">
+      <p class="measure">Every production concern splits the same way it always has: a <strong>pure policy decision</strong> (is this tenant over quota? whose turn is it? is this SLO breached? does this attestation verify?) and a <strong>hardened shell</strong> that measures inputs and carries the decision out. Nothing here changes a driver <code>step</code> or a verdict &mdash; P5 adds policy at the edges and toughens the operational surface.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Production concern</th><th>Pure decision (core)</th><th>Shell hardening</th></tr></thead>
+        <tbody>
+          <tr><td>Multi-tenancy</td><td class="m">withinQuota · nextFair</td><td>usage tracking · enforcement</td></tr>
+          <tr><td>Disaster recovery</td><td class="m">recoveryPlan · rpoMet</td><td>backup/restore · failover · drills</td></tr>
+          <tr><td>SLAs</td><td class="m">evaluate · shouldAlert</td><td>metric feed · alert pipeline</td></tr>
+          <tr><td>Attestation</td><td class="m">verifyAttestation</td><td>SPIRE TPM plugin</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- 02 COMPONENTS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>Components</h2></div>
+    <div class="sec-body">
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 280" role="img" aria-label="Three tenants each submit jobs that pass a per-tenant quota gate, then a fair-share picker chooses the next job across tenants, dispatching to cells that are isolated per tenant.">
+            <defs>
+              <marker id="sm" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+              <marker id="sa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+            </defs>
+            <rect class="d-box" x="30" y="44" width="120" height="40" rx="9"/><text class="d-lbl-s" x="90" y="69" text-anchor="middle" font-size="11">tenant A · jobs</text>
+            <rect class="d-box" x="30" y="120" width="120" height="40" rx="9"/><text class="d-lbl-s" x="90" y="145" text-anchor="middle" font-size="11">tenant B · jobs</text>
+            <rect class="d-box" x="30" y="196" width="120" height="40" rx="9"/><text class="d-lbl-s" x="90" y="221" text-anchor="middle" font-size="11">tenant C · jobs</text>
+
+            <rect class="d-core" x="180" y="48" width="80" height="32" rx="8"/><text class="d-lbl-a" x="220" y="68" text-anchor="middle" font-size="11">quota</text>
+            <rect class="d-core" x="180" y="124" width="80" height="32" rx="8"/><text class="d-lbl-a" x="220" y="144" text-anchor="middle" font-size="11">quota</text>
+            <rect class="d-core" x="180" y="200" width="80" height="32" rx="8"/><text class="d-lbl-a" x="220" y="220" text-anchor="middle" font-size="11">quota</text>
+            <path class="d-flow" d="M150 64 L176 64" marker-end="url(#sm)"/>
+            <path class="d-flow" d="M150 140 L176 140" marker-end="url(#sm)"/>
+            <path class="d-flow" d="M150 216 L176 216" marker-end="url(#sm)"/>
+
+            <path class="d-flow-a" d="M260 64 L376 128" marker-end="url(#sa)"/>
+            <path class="d-flow-a" d="M260 140 L376 140" marker-end="url(#sa)"/>
+            <path class="d-flow-a" d="M260 216 L376 152" marker-end="url(#sa)"/>
+            <rect class="d-core" x="378" y="110" width="150" height="60" rx="12"/>
+            <text class="d-lbl-a" x="453" y="136" text-anchor="middle" font-weight="600" font-size="12">nextFair</text>
+            <text class="d-lbl-s" x="453" y="154" text-anchor="middle" font-size="10.5">fair share</text>
+
+            <path class="d-flow-a" d="M528 128 L586 74" marker-end="url(#sa)"/>
+            <path class="d-flow-a" d="M528 140 L586 140" marker-end="url(#sa)"/>
+            <path class="d-flow-a" d="M528 152 L586 206" marker-end="url(#sa)"/>
+            <rect class="d-box" x="588" y="50" width="150" height="46" rx="10"/><text class="d-lbl" x="663" y="78" text-anchor="middle" font-size="12">cell · tenant A</text>
+            <rect class="d-box" x="588" y="118" width="150" height="46" rx="10"/><text class="d-lbl" x="663" y="146" text-anchor="middle" font-size="12">cell · tenant B</text>
+            <rect class="d-box" x="588" y="186" width="150" height="46" rx="10"/><text class="d-lbl" x="663" y="214" text-anchor="middle" font-size="12">cell · tenant C</text>
+            <text class="d-lbl-s" x="663" y="256" text-anchor="middle" font-size="10.5">isolated per tenant (R4 + sandbox)</text>
+          </svg>
+        </div>
+        <figcaption><b>Quota gates, then a fair pick, then isolated cells.</b> Each tenant's jobs clear their own quota, a fair-share core chooses whose job runs next, and work lands in tenant-scoped cells. The two decisions &mdash; within-quota and fair-next &mdash; are pure, so fairness and limits are proven in tests, not observed in production.</figcaption>
+      </figure>
+
+      <!-- QUOTAS + FAIRNESS -->
+      <div class="component">
+        <div class="cmp-name"><h3>Quotas &amp; fairness</h3><span class="cmp-tag new">tenancy · new</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — keep tenants within limits and share capacity fairly, each tenant's work isolated. Quota and fair-share are pure; usage tracking and enforcement are shell; isolation reuses R4 (dedicated cells) + the sandbox.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> withinQuota(t Tenant, u Usage, q Quota) <span class="ty">bool</span>
+<span class="kw">func</span> nextFair(pending <span class="ty">[]Job</span>,
+               u <span class="ty">map</span>[Tenant]Usage) JobID
+  <span class="cm">// dominant-resource fair share</span>
+<span class="kw">func</span> scope(job Job) TenantScope   <span class="cm">// isolation</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>track per-tenant usage; reject / queue over-quota jobs</li>
+              <li>dispatch the fair pick under the tenant's scope</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — tenant + usage + quota in; a boolean / a chosen job / a scope out. "Two equal-weight tenants, one flooding → the fair pick alternates" is a pure test &mdash; fairness proven without a live workload.</p>
+      </div>
+
+      <!-- DISASTER RECOVERY -->
+      <div class="component">
+        <div class="cmp-name"><h3>Disaster recovery</h3><span class="cmp-tag new">resilience · new</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — recover from the loss of a whole region or store: decide the recovery plan (failover, re-home, restore from backup) and prove it in drills. The plan is pure; backup/restore and failover are shell.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> recoveryPlan(loss Loss, fleet FleetState) <span class="ty">[]Step</span>
+  <span class="cm">// Step = ReHome{region} | RestoreRegistry{backup}</span>
+  <span class="cm">//      | Reroute{traffic}</span>
+<span class="kw">func</span> rpoMet(lastBackup, now Instant, rpo Duration) <span class="ty">bool</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>execute steps: re-home agents (P1 failover), restore the FDB registry, redirect the global router</li>
+              <li>run DR drills on a schedule</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — a loss event + fleet state in; a recovery plan out. Because the plan is pure, a drill asserts "us-east lost → these exact steps" <em>before</em> anything executes.</p>
+        <div class="note"><span class="nt"><b>Chaos testing is the shell that validates the plan.</b> The chaos harness injects the faults &mdash; kill cells, partition regions, drop packets &mdash; and checks the fleet converges to what <code>recoveryPlan</code> said it should. FCIS gives the harness a free oracle: the expected recovery is a pure function, so "reality vs. the core's decision" is the assertion.</span></div>
+      </div>
+
+      <!-- SLAs -->
+      <div class="component">
+        <div class="cmp-name"><h3>SLAs &amp; alerting</h3><span class="cmp-tag new">operations · new</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — turn the P4 metric rollups into SLO verdicts and page only when it matters. Evaluation and alert-worthiness are pure; feeding metrics and firing alerts are shell.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> evaluate(slo SLO, w Metrics) SLState
+  <span class="cm">// SLState = Met | AtRisk | Breached</span>
+<span class="kw">func</span> errorBudget(slo SLO, w Metrics) <span class="ty">float</span>
+<span class="kw">func</span> shouldAlert(cur, prev SLState, h Hysteresis) <span class="ty">bool</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>feed the rolled-up metrics window</li>
+              <li>fire alerts to the notification pipeline; page on-call</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — an SLO + a metrics window in; a state / a budget / an alert decision out. Hysteresis lives in the pure <code>shouldAlert</code>, so "flapping at the threshold doesn't page twice" is a unit test &mdash; no accidental alert storms.</p>
+      </div>
+
+      <!-- ATTESTATION -->
+      <div class="component">
+        <div class="cmp-name"><h3>Core-tier attestation</h3><span class="cmp-tag delta">security · delta</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — on the core tier, bind identity to real hardware (brief S4) by verifying a TPM/enclave quote. Verification is pure crypto; obtaining the quote is shell. The open tier still relies on quorum + reputation.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> verifyAttestation(q AttQuote, p AttPolicy) AttResult
+  <span class="cm">// Valid{measurements} | Invalid</span>
+<span class="kw">func</span> trustFromAttestation(r AttResult) TrustTier</pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>SPIRE's node-attestation plugin fetches the TPM quote at enrollment</li>
+              <li>set the issued identity's trust tier from the result</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — a quote + policy in; a verdict / trust tier out. Verifying a quote against expected measurements is a pure, auditable function &mdash; attestation raises assurance on the core tier without touching the open tier's model.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 03 AUDIT -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>The security audit is tractable because the cores are pure</h2></div>
+    <div class="sec-body">
+      <p class="measure">P5's security audit reviews the security-critical logic &mdash; the quorum <code>verdict</code>, <code>reputation</code>, <code>admitOpen</code>, <code>verifyAttestation</code>, <code>verifySignature</code>, and the quota checks &mdash; and every one of them is a <strong>pure function with property tests</strong>. An auditor can answer "can a minority flip a verdict?" or "can an over-quota tenant sneak a job through?" by reading one function and its tests, not by tracing logic tangled through network and disk I/O. Drawing the FCIS line well in P0 is what makes the phase-5 audit a bounded, readable exercise instead of a spelunk.</p>
+    </div>
+  </section>
+
+  <!-- 04 DEFERRED -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>What P5 defers</h2></div>
+    <div class="sec-body">
+      <p class="measure">P5 makes the swarm safe to run for many tenants, survivable, and accountable to its promises. One phase remains. <strong>P6 (self-tuning + full-scale GA)</strong> writes the last cores &mdash; mitosis that splits on a <em>measured</em> signal rather than a count (the brief §03 upgrade) and capability/locality placement refinement (short of a solver, per §18) &mdash; and validates a sustained run at ~1M nodes. After that, the design is realized: every decision pure, every effect in a shell, from a two-machine start to a million.</p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot-inner">
+      <span>Swarm · P5 component design</span>
+      <span>policy cores · hardened shells · same FCIS line</span>
+    </div>
+  </footer>
+
+</div>
+
+</body>
+</html>

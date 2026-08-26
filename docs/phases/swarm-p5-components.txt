@@ -1,0 +1,128 @@
+===============================================================================
+SWARM · P5 — COMPONENT DESIGN
+Functional core / imperative shell · phase 5 of 6
+production readiness / GA · policy cores, hardened shells
+===============================================================================
+
+P5 turns a working swarm into a production one — tenant quotas and fairness,
+disaster recovery, SLAs, and hardware attestation. Each is a new pure policy
+decision plus a hardened shell; and because the security-critical logic stays
+pure, the security audit is tractable.
+
+
+-------------------------------------------------------------------------------
+01 — PRODUCTION IS POLICY, THEN HARDENING
+-------------------------------------------------------------------------------
+Every production concern splits the same way: a PURE POLICY DECISION (is this
+tenant over quota? whose turn is it? is this SLO breached? does this attestation
+verify?) and a HARDENED SHELL that measures inputs and carries the decision out.
+Nothing here changes a driver step or a verdict — P5 adds policy at the edges
+and toughens the operational surface.
+
+  Production concern   Pure decision (core)      Shell hardening
+  -------------------  ------------------------  ------------------------------
+  Multi-tenancy        withinQuota · nextFair    usage tracking · enforcement
+  Disaster recovery    recoveryPlan · rpoMet     backup/restore · failover · drills
+  SLAs                 evaluate · shouldAlert    metric feed · alert pipeline
+  Attestation          verifyAttestation         SPIRE TPM plugin
+
+
+-------------------------------------------------------------------------------
+02 — COMPONENTS
+-------------------------------------------------------------------------------
+
+  Tenant A jobs -> quota -\
+  Tenant B jobs -> quota --> nextFair (fair share) -> cell·A / cell·B / cell·C
+  Tenant C jobs -> quota -/                            isolated per tenant (R4+sandbox)
+
+Each tenant's jobs clear their own quota, a fair-share core chooses whose job
+runs next, and work lands in tenant-scoped cells. within-quota and fair-next are
+pure, so fairness and limits are proven in tests, not observed in production.
+
+QUOTAS & FAIRNESS  [tenancy · new]
+  Responsibility: keep tenants within limits and share capacity fairly, each
+    tenant's work isolated. Quota + fair-share pure; usage tracking + enforcement
+    shell; isolation reuses R4 (dedicated cells) + the sandbox.
+  Core (pure):
+    withinQuota(t Tenant, u Usage, q Quota) bool
+    nextFair(pending []Job, u map[Tenant]Usage) JobID  // dominant-resource fair share
+    scope(job Job) TenantScope                          // isolation
+  Shell (I/O): track per-tenant usage; reject/queue over-quota jobs; dispatch the
+    fair pick under the tenant's scope.
+  Boundary: tenant + usage + quota in; boolean / chosen job / scope out. "Two
+    equal-weight tenants, one flooding -> the fair pick alternates" is a pure test.
+
+DISASTER RECOVERY  [resilience · new]
+  Responsibility: recover from the loss of a whole region or store — decide the
+    recovery plan (failover, re-home, restore from backup) and prove it in drills.
+    Plan pure; backup/restore + failover shell.
+  Core (pure):
+    recoveryPlan(loss Loss, fleet FleetState) []Step
+      // Step = ReHome{region} | RestoreRegistry{backup} | Reroute{traffic}
+    rpoMet(lastBackup, now Instant, rpo Duration) bool
+  Shell (I/O): execute steps (re-home agents [P1 failover], restore FDB registry,
+    redirect the global router); run DR drills on a schedule.
+  Boundary: a loss event + fleet state in; a recovery plan out. Because the plan
+    is pure, a drill asserts "us-east lost -> these exact steps" BEFORE anything
+    executes.
+  Chaos testing is the shell that validates the plan: the chaos harness injects
+  faults (kill cells, partition regions, drop packets) and checks the fleet
+  converges to what recoveryPlan said. FCIS gives a free oracle — the expected
+  recovery is a pure function, so "reality vs. the core's decision" is the assert.
+
+SLAs & ALERTING  [operations · new]
+  Responsibility: turn the P4 metric rollups into SLO verdicts and page only when
+    it matters. Evaluation + alert-worthiness pure; feeding metrics + firing
+    alerts shell.
+  Core (pure):
+    evaluate(slo SLO, w Metrics) SLState  // Met | AtRisk | Breached
+    errorBudget(slo SLO, w Metrics) float
+    shouldAlert(cur, prev SLState, h Hysteresis) bool
+  Shell (I/O): feed the rolled-up metrics window; fire alerts to the notification
+    pipeline; page on-call.
+  Boundary: an SLO + a metrics window in; state / budget / alert decision out.
+    Hysteresis lives in pure shouldAlert, so "flapping at the threshold doesn't
+    page twice" is a unit test — no accidental alert storms.
+
+CORE-TIER ATTESTATION  [security · delta]
+  Responsibility: on the core tier, bind identity to real hardware (S4) by
+    verifying a TPM/enclave quote. Verification pure crypto; obtaining the quote
+    shell. The open tier still relies on quorum + reputation.
+  Core (pure):
+    verifyAttestation(q AttQuote, p AttPolicy) AttResult  // Valid{measurements} | Invalid
+    trustFromAttestation(r AttResult) TrustTier
+  Shell (I/O): SPIRE's node-attestation plugin fetches the TPM quote at
+    enrollment; set the issued identity's trust tier from the result.
+  Boundary: a quote + policy in; a verdict / trust tier out. Verifying a quote
+    against expected measurements is a pure, auditable function — attestation
+    raises assurance on the core tier without touching the open tier's model.
+
+
+-------------------------------------------------------------------------------
+03 — THE SECURITY AUDIT IS TRACTABLE BECAUSE THE CORES ARE PURE
+-------------------------------------------------------------------------------
+P5's security audit reviews the security-critical logic — the quorum verdict,
+reputation, admitOpen, verifyAttestation, verifySignature, and the quota checks —
+and every one is a PURE FUNCTION WITH PROPERTY TESTS. An auditor can answer "can
+a minority flip a verdict?" or "can an over-quota tenant sneak a job through?" by
+reading one function and its tests, not by tracing logic tangled through network
+and disk I/O. Drawing the FCIS line well in P0 is what makes the phase-5 audit a
+bounded, readable exercise instead of a spelunk.
+
+
+-------------------------------------------------------------------------------
+04 — WHAT P5 DEFERS
+-------------------------------------------------------------------------------
+P5 makes the swarm safe to run for many tenants, survivable, and accountable to
+its promises. One phase remains. P6 (self-tuning + full-scale GA) writes the last
+cores — mitosis that splits on a MEASURED signal rather than a count (the §03
+upgrade) and capability/locality placement refinement (short of a solver, per
+§18) — and validates a sustained run at ~1M nodes. After that, the design is
+realized: every decision pure, every effect in a shell, from a two-machine start
+to a million.
+
+
+===============================================================================
+Swarm · P5 component design
+policy cores · hardened shells · same FCIS line
+===============================================================================

@@ -1,0 +1,199 @@
+===============================================================================
+SWARM · P0 — COMPONENT DESIGN
+Functional core / imperative shell · phase 0 of 6
+core = decisions (pure) · shell = I/O
+===============================================================================
+
+Every P0 component is a FUNCTIONAL CORE that decides and an IMPERATIVE SHELL that
+acts. The core is pure and exhaustively testable; the shell is thin and does all
+the I/O. Per component below: Responsibility · Functional core (pure fns with
+types) · Imperative shell (I/O + run loop) · Boundary types.
+
+
+-------------------------------------------------------------------------------
+01 — THE FCIS PATTERN, APPLIED TO SWARM
+-------------------------------------------------------------------------------
+The dividing line is DECISIONS vs ACTIONS. The functional core takes plain data
+and returns descriptions of what to do (commands); it touches nothing else. The
+imperative shell runs a loop: gather events, call the core, execute the commands
+it returns. The rule that keeps the core pure: it never performs an effect and
+never reads the clock or randomness itself — the shell reads those and passes
+them IN AS DATA, so the core stays deterministic and every decision is
+reproducible in a unit test.
+
+  events + clock + rng  --(as data)-->  [ FUNCTIONAL CORE ]  --commands-->  shell
+       (shell gathers)                    pure · no I/O                    executes
+                                                                           effects
+
+Why it's worth it here: the decisions in Swarm — when a cell splits, where a
+task lands, whether a quorum agrees, how a barrier steps — are the parts most
+likely to be subtly wrong and hardest to reproduce through live I/O. As pure
+functions they get exhaustive unit tests; the thin shell needs only a handful of
+integration tests.
+
+
+-------------------------------------------------------------------------------
+02 — HOW TO READ EACH COMPONENT
+-------------------------------------------------------------------------------
+  Responsibility     the one job this component owns
+  Functional core    the pure functions, with input/output types — the decisions
+  Imperative shell   the I/O it performs and the run loop feeding the core
+  Boundary types     the plain data that crosses between core and shell
+
+Signatures are Go-flavored pseudocode; sum types (Split | Merge | None) are
+tagged unions. Go holds shells and pure cores side by side (a `core` package
+importing no net/os); Rust carries hot-path cores in later phases.
+
+
+-------------------------------------------------------------------------------
+03 — SHARED DATA MODEL (boundary types)
+-------------------------------------------------------------------------------
+  type JobSpec    struct { ID JobID; Template string; Coupling Coupling; Params map }
+  type Task       struct { ID TaskID; JobID JobID; Input []byte; Attempt int }
+  type TaskResult struct { TaskID TaskID; Output []byte; OK bool }
+  type Aggregate  struct { JobID JobID; Value []byte; Done bool }
+  type CellView   struct { ID CellID; Size int; Free int; Caps CapSet }
+  type Instant    int64      // monotonic ns, supplied by the shell
+  type Coupling   int        // Independent | Barrier | Leader | MessagePassing
+
+COMMANDS ARE DATA TOO. Each core returns a slice of command values (Dispatch,
+SplitCell, Dial, ...) that the shell pattern-matches and executes. Returning
+commands instead of calling them is what makes the core pure — and what lets a
+test assert on the commands without anything actually happening.
+
+
+-------------------------------------------------------------------------------
+04 — P0 SYSTEM MAP
+-------------------------------------------------------------------------------
+P0 = one region, trusted machines, native execution, the `independent` driver
+only. Five parts: CLI, control plane (planner, registry, rendezvous, mitosis),
+and the agent — over a cell that is just a pull queue + gossip membership.
+
+  CLI --submit--> CONTROL PLANE {planner, registry, rendezvous, mitosis}
+                     |  enqueue                 ^ dial to join
+                     v                          |
+                   CELL (pull queue + gossip) <--- AGENTS  (pull · execute · report)
+  mitosis controller --split/merge--> cells
+
+
+-------------------------------------------------------------------------------
+05 — COMPONENTS
+-------------------------------------------------------------------------------
+
+CLI  [client]
+  Responsibility: turn a user command into a control-plane request, render reply.
+  Core (pure):
+    parse(argv []string) (Command, error)
+    validate(spec JobSpec) error
+    render(reply Reply) string
+  Shell (I/O): read argv/env/job file; open gRPC channel, send request; stream
+    output to terminal.
+  Boundary: Command, JobSpec in; Reply out. The core never opens a socket.
+
+PLANNER & ADMISSION  [control plane]
+  Responsibility: accept/reject a job, decompose into tasks, place each on a cell.
+  Core (pure):
+    admit(spec JobSpec) ([]Task, Reject)      // validate, then template.decompose()
+    place(t Task, cells []CellView) Placement // Assign{CellID} | NoCapacity
+  Shell (I/O): receive Submit RPC; persist job+tasks; enqueue placed tasks; on
+    NoCapacity hold and retry on next registry tick.
+  Boundary: JobSpec + []CellView snapshot in; []Task + Placement out. P0
+    placement = any cell with free capacity, a pure function of the snapshot.
+
+CELL REGISTRY  [control plane]
+  Responsibility: hold authoritative cells + capacities, updated from membership.
+  Core (pure):
+    apply(reg Registry, ev RegistryEvent) (Registry, []Change)
+      // ev = CellUp | CellDown | CapacityChanged | AgentJoined | AgentLeft
+    snapshot(reg Registry) []CellView
+  Shell (I/O): subscribe to gossip/rendezvous events; call apply, persist; publish
+    snapshot() for planner and mitosis.
+  Boundary: RegistryEvent in; next Registry + []Change out. Registry is immutable
+    data; the shell swaps the stored pointer.
+
+RENDEZVOUS  [control plane]
+  Responsibility: accept dialing agents, admit them, assign each to a cell.
+  Core (pure):
+    admitAgent(req JoinReq, reg []CellView) AdmitDecision
+      // Accept{CellID} | Reject{reason} | NewCell
+  Shell (I/O): terminate agent mTLS dial-out (gRPC stream); call admitAgent with a
+    snapshot; on Accept wire agent into cell gossip; emit AgentJoined.
+  Boundary: JoinReq + snapshot in; AdmitDecision out.
+
+MITOSIS CONTROLLER  [control plane]
+  Responsibility: decide when a cell splits or two merge. P0 (independent) resize
+    is safe any time — the differentiator in its simplest form.
+  Core (pure):
+    decide(cells []CellView, cfg Thresholds, cooldowns map[CellID]Instant,
+           now Instant) []Mitosis
+      // Mitosis = Split{CellID} | Merge{a,b CellID} | None
+      // split when Size > 2T; merge two neighbors < T;
+      // suppress if now-cooldown[id] < window
+  Shell (I/O): read registry snapshot + clock on a timer; call decide; execute
+    Split/Merge (reconfigure cells, reassign agents, stamp cooldowns).
+  Boundary: sizes, thresholds, cooldowns, now in; []Mitosis out. Every rule (2T
+    band, cooldown, sustained window) unit-tested with snapshots + a fake clock.
+
+AGENT · REGISTRATION & RECONNECT  [agent]
+  Responsibility: get and stay joined — dial out, enroll once, join a cell,
+    heartbeat, resume the loop on any drop.
+  Core (pure):
+    step(s RegState, ev RegEvent, now Instant, jitter float64) (RegState, []RegCmd)
+      // RegState = Dialing | Enrolling | Joining | Member
+      // RegEvent = DialOK | DialFail | Enrolled | Joined | ConnLost | Tick
+      // RegCmd   = Dial{region} | Enroll | JoinCell | Heartbeat | Wait{d} | Failover
+    backoff(attempt int, cfg BackoffCfg, jitter float64) Duration
+  Shell (I/O): perform Dial/Enroll/Heartbeat over mTLS gRPC; read clock, draw
+    jitter and pass it in; run Wait timers; detect drops -> ConnLost; hold the
+    SPIFFE identity across reconnects.
+  Boundary: (state, event, now, jitter) in; (next state, commands) out.
+    Retry-forever + failover is a pure state machine — a two-line test.
+
+AGENT · TASK RUNNER  [agent]
+  Responsibility: pull a task, run it natively, report the result; re-pull idle.
+  Core (pure):
+    step(s RunState, ev RunEvent) (RunState, []RunCmd)
+      // RunEvent = Idle | Pulled{task} | Done{result} | Failed
+      // RunCmd   = Pull | Execute{task} | Report{result} | ReQueue{task}
+  Shell (I/O): Pull from cell queue over gRPC; Execute (spawn native process,
+    capture output); Report the TaskResult.
+  Boundary: RunEvent in; RunCmd out. Membership lives in the shell (memberlist/
+    SWIM); the pure part is reconcile(view, events) -> (view, changes).
+
+TEMPLATES · keyspace-search, monte-carlo  [pure logic]
+  Responsibility: split a job into independent tasks and merge results. All core,
+    no shell.
+  Core (pure):
+    keyspace-search: decompose(j KeyspaceJob) []Task  // split range
+                     merge(rs []TaskResult) Aggregate // first-hit
+    monte-carlo:     decompose(j MCJob) []Task         // seed blocks
+                     merge(rs []TaskResult) Aggregate  // sum · stats
+  Shell (I/O): none. Templates are pure functions the planner (decompose) and job
+    tracker (merge) call. The workload binary they describe is what the agent's
+    shell executes.
+  Boundary: a typed job in; []Task or an Aggregate out. A new template is a new
+    pair of pure functions registered by name — no shell to touch.
+
+
+-------------------------------------------------------------------------------
+06 — WHAT THIS BUYS, AND WHAT P0 DEFERS
+-------------------------------------------------------------------------------
+The payoff is a testing split that matches the risk. The CORES — mitosis,
+placement, admission, the two agent state machines, the templates — get
+exhaustive table-driven unit tests with hand-built inputs and a fake clock,
+because they're pure. The SHELLS are thin enough to cover with a handful of
+integration tests: a real dial-out, a real pull, a real split against a live
+registry.
+
+Deferred by design (later phases keep the same boundary): checkpointing and the
+barrier/leader/message-passing drivers (P2), multi-region + regional control
+plane (P1), WASM sandboxing + quorum/reputation verification (P3) all slot in as
+new cores (decisions) and new shell actions — they extend the FCIS line, not
+move it. The Coupling field is already in the model, so P2 has nothing to
+retrofit.
+
+
+===============================================================================
+Swarm · P0 component design
+functional core = decisions · imperative shell = I/O
+===============================================================================

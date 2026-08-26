@@ -1,0 +1,137 @@
+===============================================================================
+SWARM · P3 — COMPONENT DESIGN
+Functional core / imperative shell · phase 3 of 6
+open / untrusted tier · WASM sandbox + quorum verification
+===============================================================================
+
+P3 opens the swarm to anonymous, untrusted machines by running work in a WASM
+sandbox and confirming every result by quorum. The security logic — random
+assignment, the quorum verdict, reputation, honeypots — is ALL PURE DECISION, so
+the safety of untrusted compute reduces to a handful of property tests.
+
+
+-------------------------------------------------------------------------------
+01 — THE OPEN-TIER VERIFICATION PATH
+-------------------------------------------------------------------------------
+The core tier (P0-P2) runs a task ONCE on a trusted machine. The open tier
+can't: an untrusted machine may lie. So an open-tier task takes a different path
+— dispatched to K RANDOMLY-CHOSEN machines, each runs it SANDBOXED IN WASM, and
+the results feed a QUORUM VERDICT that accepts only the agreed answer.
+
+  TASK --> assign(K random, seed) --> [machine WASM] x3 --> verdict(quorum) --> ACCEPT
+  (open tier)   (pure)                (untrusted)          (pure)          or RE-RUN
+                                                    outcome updates reputation;
+                                                    honeypots sampled among the K
+
+Run it K ways, believe the majority. An untrusted machine can lie about its own
+task, but it can't control who else was randomly assigned it — so a minority of
+liars is outvoted. Assignment, the verdict, and the reputation update are pure;
+only dispatch and the sandboxed runs touch the world.
+
+
+-------------------------------------------------------------------------------
+02 — COMPONENTS
+-------------------------------------------------------------------------------
+
+WASM SANDBOX RUNNER  [agent · delta from P0]
+  Responsibility: on open-tier machines, run the task inside a Wasmtime sandbox
+    with least-privilege WASI, after checking its signature. P0's run state
+    machine unchanged; only HOW a task executes swaps from native to WASM.
+  Core (pure):
+    grants(task Task) WasiCaps  // least privilege: only what the task declared
+    verifyModule(mod []byte, sig Sig, key PubKey) bool
+  Shell (I/O): instantiate Wasmtime with computed grants; run module, capture
+    output; refuse to run if verifyModule is false.
+  Boundary: task + module + signature in; caps / bool out. Sandbox policy is a
+    pure decision; only Wasmtime instantiation is I/O — "a task gets exactly the
+    caps it declared, no more" is a unit test.
+
+RESULT VERIFICATION  [verification · new]
+  Responsibility: send each open-tier task to K randomly chosen machines and
+    accept only the answer a quorum agrees on. The heart of untrusted correctness.
+  Core (pure):
+    assign(t TaskID, pool []MachineID, k int, seed uint64) []MachineID
+    redundancy(tier Tier, rep Reputation) int
+    verdict(rs []Result) Verdict  // Agreed{value} | Disputed | Insufficient
+  Shell (I/O): dispatch to the K machines, collect with timeout; on Agreed accept,
+    else re-run with fresh assignment.
+  Boundary: task + pool + seed in; K-subset out; results in; Verdict out. "K=5, 3
+    honest agree, 2 lie -> Agreed on the honest value" is a pure test.
+
+REPUTATION GATING  [verification · new]
+  Responsibility: track how much each identity has earned trust; set how much
+    verification a machine needs. A Sybil earns no shortcut — every fresh identity
+    starts at zero.
+  Core (pure):
+    update(rep Reputation, agreed bool) Reputation  // rises on honest agreement, falls on a lie
+    weight(rep Reputation) float
+    needsK(rep Reputation, tier Tier) int           // more replicas for low-rep identities
+  Shell (I/O): persist the reputation store keyed by SPIFFE identity; read on
+    assignment, write after each verdict.
+  Boundary: reputation + agreement in; new reputation / weight / K out.
+    Monotonicity ("honest work never lowers reputation") is a property test;
+    zero-start makes faking many identities pointless.
+
+HONEYPOT SPOT-CHECKS  [verification · new]
+  Responsibility: occasionally hand out a task whose answer is already known, and
+    blacklist any identity that lies about it. No account needed.
+  Core (pure):
+    shouldProbe(rep Reputation, rng float) bool
+    check(claimed Result, known Result) Probe  // Match | Lie
+    onLie(id SpiffeID) Action                   // Blacklist
+  Shell (I/O): inject a known-answer task at the chosen rate; compare; blacklist
+    identity/origin on a lie.
+  Boundary: reputation + rng in, probe decision out; claimed vs known in, action
+    out. All pure — "a lie on a known answer is always caught" is a one-liner.
+
+ANONYMOUS ENROLLMENT & SIGNING  [security · delta]
+  Responsibility: let anyone join the open tier without an account (optionally
+    gated by proof-of-work) and refuse unsigned workloads.
+  Core (pure):
+    admitOpen(req JoinReq, pow PowProof, cfg PowCfg) Admit  // verify PoW; Accept{open id} | Reject
+    verifySignature(wl []byte, sig Sig, key PubKey) bool
+  Shell (I/O): SPIRE issues the open-tier mTLS identity on Accept; distribute
+    signing public keys; verify before dispatch.
+  Boundary: join request + PoW in; admit decision out. Verifying a PoW or a
+    signature is pure crypto; only issuing the certificate is I/O.
+
+
+-------------------------------------------------------------------------------
+03 — THE SAFETY GUARANTEES ARE PROPERTY TESTS
+-------------------------------------------------------------------------------
+Because every security decision is a pure function, the properties that make
+untrusted compute safe are checkable in a test harness — no adversarial cluster,
+no live attacker. The assertions P3 stands or falls on:
+
+  verdict   A minority of liars can't flip an Agreed result when the honest
+            machines hold the majority of the K-sample.
+  assign    Assignment is uniform over the pool for any seed — colluding Sybils
+            rarely co-occupy a single task's K-set.
+  update    Reputation is monotonic in honest agreement, and every fresh identity
+            starts at zero — faking many identities buys nothing.
+  honeypot  A lie on a known answer is always caught and always blacklists the
+            lying identity.
+  grants    A task receives exactly the WASI capabilities it declared, no others.
+
+This is why the tier is safe to open: the brief argued the untrusted-machine
+threat collapses to "lie about your own task, possibly at scale." P3 answers each
+with a pure decision whose guarantee is a unit test — the safety isn't
+hoped-for, it's asserted.
+
+
+-------------------------------------------------------------------------------
+04 — WHAT P3 DEFERS
+-------------------------------------------------------------------------------
+P3 opens the swarm to the public without moving the FCIS line: a new execution
+path (WASM), plus verification cores (assign, verdict, reputation, honeypot) and
+their thin shells. The last phase, P4, is scale infrastructure — the FoundationDB
+registry, observability aggregation, rolling upgrades, and the sustained 1M-node
+validation — followed by production hardening (P5) and self-tuning (P6). None of
+them change a driver step or a verdict; they harden the shell and scale the
+stores underneath.
+
+
+===============================================================================
+Swarm · P3 component design
+untrusted machines · quorum-verified · same FCIS line
+===============================================================================

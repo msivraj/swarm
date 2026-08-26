@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swarm P3 Components</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bg:#F1F4F3; --surface:#FFFFFF; --surface-2:#F7F9F8; --ink:#14201D; --muted:#566964;
+    --line:#DCE4E1; --line-2:#C5D1CD; --accent:#0E8F84; --accent-sf:#0e8f8416;
+    --plane:#3B5B8C; --plane-sf:#3b5b8c14; --good:#2E8256; --warn:#B26F13; --crit:#BC4130;
+    --shadow:0 1px 2px #14201d0c, 0 8px 24px -12px #14201d1f;
+  }
+  :root:not([data-theme="light"]) { @media (prefers-color-scheme: dark) {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  } }
+  :root[data-theme="dark"] {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--bg); color:var(--ink); font-family:"IBM Plex Sans",system-ui,sans-serif;
+    font-size:17px; line-height:1.62; margin:0; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1040px; margin:0 auto; padding:0 24px; }
+  .measure { max-width:720px; }
+
+  header.masthead { border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--surface-2),var(--bg)); }
+  .masthead-inner { padding:26px 24px 22px; max-width:1040px; margin:0 auto;
+    display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+  .brand { display:flex; align-items:center; gap:13px; }
+  .glyph { width:38px; height:38px; flex:none; color:var(--accent); }
+  .brand-text { display:flex; flex-direction:column; line-height:1.1; }
+  .brand-name { font-weight:700; font-size:20px; letter-spacing:-0.02em; }
+  .brand-sub { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    letter-spacing:0.02em; margin-top:3px; }
+  .masthead-meta { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    text-align:right; line-height:1.7; }
+  .masthead-meta b { color:var(--ink); font-weight:600; }
+
+  .hero { padding:56px 0 26px; }
+  .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-weight:500;
+    letter-spacing:0.16em; text-transform:uppercase; color:var(--accent);
+    display:flex; align-items:center; gap:10px; }
+  .eyebrow::before { content:""; width:26px; height:1px; background:var(--accent); display:inline-block; }
+  h1 { font-size:clamp(32px,5.4vw,48px); line-height:1.04; letter-spacing:-0.033em; font-weight:700;
+    margin:20px 0 0; text-wrap:balance; max-width:17ch; }
+  .lede { font-size:clamp(17px,2.3vw,20px); color:var(--muted); margin:22px 0 0; max-width:52ch;
+    text-wrap:pretty; }
+  .lede b { color:var(--ink); font-weight:600; }
+
+  section { padding:38px 0; border-top:1px solid var(--line); margin-top:36px; }
+  .sec-head { display:flex; gap:18px; align-items:baseline; margin-bottom:8px; }
+  .sec-num { font-family:"IBM Plex Mono",monospace; font-size:14px; font-weight:600; color:var(--accent);
+    flex:none; padding-top:4px; }
+  h2 { font-size:clamp(23px,3.4vw,31px); letter-spacing:-0.025em; font-weight:700; margin:0;
+    text-wrap:balance; line-height:1.12; }
+  h3 { font-size:19px; letter-spacing:-0.01em; font-weight:600; margin:0 0 4px; }
+  p { margin:14px 0; }
+  .sec-body { padding-left:0; }
+  @media (min-width:720px){ .sec-body { padding-left:47px; } }
+  strong { font-weight:600; }
+  code,.mono { font-family:"IBM Plex Mono",monospace; font-size:0.88em; }
+  p code,li code { background:var(--accent-sf); color:var(--ink); padding:1px 6px; border-radius:5px;
+    font-size:0.83em; }
+
+  figure { margin:28px 0 8px; }
+  .figframe { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:26px 24px 18px; box-shadow:var(--shadow); overflow-x:auto; }
+  figcaption { font-size:14px; color:var(--muted); margin-top:14px; line-height:1.5; max-width:68ch; }
+  figcaption b { color:var(--ink); font-weight:600; }
+  svg { display:block; max-width:100%; height:auto; }
+  svg text { font-family:"IBM Plex Mono",monospace; }
+  .d-box { fill:var(--surface-2); stroke:var(--line-2); stroke-width:1.5; }
+  .d-core { fill:var(--accent-sf); stroke:var(--accent); stroke-width:1.6; }
+  .d-plane { fill:var(--plane-sf); stroke:var(--plane); stroke-width:1.5; }
+  .d-lbl { fill:var(--ink); font-size:13px; font-weight:500; }
+  .d-lbl-s { fill:var(--muted); font-size:11.5px; }
+  .d-lbl-a { fill:var(--accent); font-size:11.5px; font-weight:600; }
+  .d-flow { stroke:var(--muted); stroke-width:1.6; fill:none; }
+  .d-flow-a { stroke:var(--accent); stroke-width:1.8; fill:none; }
+
+  .code-card { background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    overflow:hidden; box-shadow:var(--shadow); margin:16px 0; }
+  .code-top { display:flex; align-items:center; gap:8px; padding:9px 15px; border-bottom:1px solid var(--line);
+    background:var(--surface-2); }
+  .code-top .fn { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  pre { margin:0; padding:16px 18px; overflow-x:auto; font-family:"IBM Plex Mono",monospace;
+    font-size:13px; line-height:1.65; color:var(--ink); }
+  .ty { color:var(--accent); }
+  .kw { color:var(--plane); }
+  .cm { color:var(--muted); }
+
+  .component { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:22px 22px 18px; box-shadow:var(--shadow); margin:18px 0; }
+  .component > .cmp-resp { margin:6px 0 0; color:var(--muted); font-size:15px; }
+  .component > .cmp-resp b { color:var(--ink); }
+  .cmp-name { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .cmp-tag { font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.07em; color:var(--muted); border:1px solid var(--line-2); border-radius:20px;
+    padding:2px 9px; }
+  .cmp-tag.new { color:var(--accent); border-color:var(--accent); }
+  .cmp-tag.delta { color:var(--warn); border-color:var(--warn); }
+  .fcis-split { display:grid; grid-template-columns:1fr; gap:14px; margin-top:16px; }
+  @media (min-width:760px){ .fcis-split { grid-template-columns:1fr 1fr; } }
+  .fcis-core, .fcis-shell { border-radius:12px; padding:14px 15px; }
+  .fcis-core { background:var(--accent-sf); border:1px solid var(--accent); }
+  .fcis-shell { background:var(--surface-2); border:1px solid var(--line-2); }
+  .fcis-head { font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px; display:flex; gap:7px; align-items:center; }
+  .fcis-core .fcis-head { color:var(--accent); }
+  .fcis-shell .fcis-head { color:var(--muted); }
+  .fcis-core pre { background:transparent; padding:2px 0; font-size:12.5px; }
+  .fcis-shell ul { margin:0; padding-left:17px; }
+  .fcis-shell li { font-size:13.5px; color:var(--ink); line-height:1.5; margin:3px 0; }
+  .boundary { margin-top:14px; font-size:13.5px; color:var(--muted); }
+  .boundary b { color:var(--ink); font-weight:600; }
+
+  .props { list-style:none; padding:0; margin:18px 0 0; display:grid; gap:11px; }
+  .props li { display:flex; gap:13px; align-items:flex-start; background:var(--surface);
+    border:1px solid var(--line); border-radius:11px; padding:14px 16px; box-shadow:var(--shadow); }
+  .props .pk { font-family:"IBM Plex Mono",monospace; font-weight:600; color:var(--accent); font-size:12.5px;
+    flex:none; min-width:74px; padding-top:1px; }
+  .props .pt { font-size:14px; line-height:1.5; }
+  .props .pt b { font-weight:600; }
+
+  .note { display:flex; gap:13px; align-items:flex-start; background:var(--surface); border:1px solid var(--line);
+    border-left:3px solid var(--accent); border-radius:10px; padding:15px 17px; box-shadow:var(--shadow);
+    margin:18px 0; }
+  .note .nt { font-size:14.5px; line-height:1.55; }
+  .note .nt b { font-weight:600; }
+
+  footer { border-top:1px solid var(--line); margin-top:52px; padding:28px 0 56px; }
+  .foot-inner { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+</style>
+</head>
+<body>
+
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand">
+      <svg class="glyph" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <path d="M20 4 L33 9 V20 C33 29 27 34 20 37 C13 34 7 29 7 20 V9 Z" stroke="currentColor" stroke-width="1.7" opacity="0.6"/>
+        <path d="M14.5 20 L18.5 24 L26 15" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">Swarm · P3</span>
+        <span class="brand-sub">component design · open / untrusted tier</span>
+      </div>
+    </div>
+    <div class="masthead-meta">
+      <div>phase 3 of 6</div>
+      <div><b>security</b> = pure decisions</div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero measure">
+    <div class="eyebrow">Component Design · Phase 3</div>
+    <h1>Untrusted machines, trustworthy results.</h1>
+    <p class="lede">P3 opens the swarm to anonymous, untrusted machines by running work in a <b>WASM sandbox</b> and confirming every result by <b>quorum</b>. The security logic &mdash; random assignment, the quorum verdict, reputation, honeypots &mdash; is <em>all pure decision</em>, so the safety of untrusted compute reduces to a handful of property tests.</p>
+  </div>
+
+  <!-- 01 THE OPEN-TIER PATH -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>The open-tier verification path</h2></div>
+    <div class="sec-body">
+      <p class="measure">The core tier (P0&ndash;P2) runs a task <em>once</em> on a trusted machine. The open tier can't: an untrusted machine may lie. So an open-tier task takes a different path &mdash; it's dispatched to <strong>K randomly-chosen</strong> machines, each runs it <strong>sandboxed in WASM</strong>, and the results feed a <strong>quorum verdict</strong> that accepts only the agreed answer. Every box on the decision path is a pure function; only dispatch and execution are I/O.</p>
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 300" role="img" aria-label="An open-tier task is randomly assigned to three untrusted machines, each running it in a WASM sandbox. Their results feed a quorum verdict, which accepts the agreed answer or re-runs on disagreement; reputation is updated from the outcome.">
+            <defs>
+              <marker id="sm" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+              <marker id="sa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+              <marker id="sg" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--good)"/></marker>
+              <marker id="sc" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--crit)"/></marker>
+            </defs>
+            <rect class="d-box" x="30" y="126" width="110" height="52" rx="10"/>
+            <text class="d-lbl" x="85" y="150" text-anchor="middle" font-weight="600" font-size="12">TASK</text>
+            <text class="d-lbl-s" x="85" y="167" text-anchor="middle" font-size="10.5">open tier</text>
+
+            <path class="d-flow-a" d="M140 152 L180 152" marker-end="url(#sa)"/>
+            <rect class="d-core" x="182" y="122" width="120" height="60" rx="12"/>
+            <text class="d-lbl-a" x="242" y="148" text-anchor="middle" font-weight="600" font-size="12">assign</text>
+            <text class="d-lbl-s" x="242" y="166" text-anchor="middle" font-size="10.5">K random · seed</text>
+
+            <rect class="d-box" x="360" y="46" width="170" height="44" rx="9"/>
+            <text class="d-lbl-s" x="445" y="73" text-anchor="middle" font-size="11">machine · WASM</text>
+            <rect class="d-box" x="360" y="130" width="170" height="44" rx="9"/>
+            <text class="d-lbl-s" x="445" y="157" text-anchor="middle" font-size="11">machine · WASM</text>
+            <rect class="d-box" x="360" y="214" width="170" height="44" rx="9"/>
+            <text class="d-lbl-s" x="445" y="241" text-anchor="middle" font-size="11">machine · WASM</text>
+
+            <path class="d-flow" d="M302 138 L356 74" marker-end="url(#sm)"/>
+            <path class="d-flow" d="M302 152 L356 152" marker-end="url(#sm)"/>
+            <path class="d-flow" d="M302 166 L356 230" marker-end="url(#sm)"/>
+
+            <path class="d-flow" d="M530 74 L586 138" marker-end="url(#sm)"/>
+            <path class="d-flow" d="M530 152 L586 152" marker-end="url(#sm)"/>
+            <path class="d-flow" d="M530 230 L586 166" marker-end="url(#sm)"/>
+
+            <rect class="d-core" x="588" y="122" width="128" height="60" rx="12"/>
+            <text class="d-lbl-a" x="652" y="148" text-anchor="middle" font-weight="600" font-size="12">verdict</text>
+            <text class="d-lbl-s" x="652" y="166" text-anchor="middle" font-size="10.5">quorum</text>
+
+            <path d="M716 138 L772 108" class="d-flow" stroke="var(--good)" marker-end="url(#sg)"/>
+            <rect x="774" y="88" width="96" height="40" rx="9" fill="none" stroke="var(--good)" stroke-width="1.6"/>
+            <text x="822" y="112" text-anchor="middle" fill="var(--good)" font-size="12" font-weight="600">ACCEPT</text>
+            <path d="M716 168 L772 196" class="d-flow" stroke="var(--crit)" marker-end="url(#sc)"/>
+            <rect x="774" y="176" width="96" height="40" rx="9" fill="none" stroke="var(--crit)" stroke-width="1.6"/>
+            <text x="822" y="200" text-anchor="middle" fill="var(--crit)" font-size="12" font-weight="600">RE-RUN</text>
+
+            <text class="d-lbl-s" x="450" y="292" text-anchor="middle" font-size="10.5">outcome updates reputation · honeypots sampled among the K</text>
+          </svg>
+        </div>
+        <figcaption><b>Run it K ways, believe the majority.</b> An untrusted machine can lie about its own task, but it can't control who else was randomly assigned it &mdash; so a minority of liars is outvoted. Assignment, the verdict, and the reputation update are pure; only the dispatch and the sandboxed runs touch the world.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 02 COMPONENTS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>Components</h2></div>
+    <div class="sec-body">
+
+      <!-- WASM RUNNER -->
+      <div class="component">
+        <div class="cmp-name"><h3>WASM sandbox runner</h3><span class="cmp-tag delta">agent · delta from P0</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — on open-tier machines, run the task inside a Wasmtime sandbox with least-privilege WASI, after checking its signature. P0's run state machine is unchanged; only <em>how</em> a task executes swaps from native process to WASM.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> grants(task Task) WasiCaps
+  <span class="cm">// least privilege: only what the task declared</span>
+<span class="kw">func</span> verifyModule(mod <span class="ty">[]byte</span>, sig Sig, key PubKey) <span class="ty">bool</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>instantiate Wasmtime with the computed <code>grants</code></li>
+              <li>run the module; capture output</li>
+              <li>refuse to run if <code>verifyModule</code> is false</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — task + module + signature in; capabilities / a boolean out. The sandbox <em>policy</em> is a pure decision; only Wasmtime instantiation is I/O, so "a task gets exactly the caps it declared, no more" is a unit test.</p>
+      </div>
+
+      <!-- RESULT VERIFICATION -->
+      <div class="component">
+        <div class="cmp-name"><h3>Result verification</h3><span class="cmp-tag new">verification · new</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — send each open-tier task to K randomly chosen machines and accept only the answer a quorum agrees on. This is the heart of untrusted correctness.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> assign(t TaskID, pool <span class="ty">[]MachineID</span>,
+             k <span class="ty">int</span>, seed <span class="ty">uint64</span>) <span class="ty">[]MachineID</span>
+<span class="kw">func</span> redundancy(tier Tier, rep Reputation) <span class="ty">int</span>
+<span class="kw">func</span> verdict(rs <span class="ty">[]Result</span>) Verdict
+  <span class="cm">// Verdict = Agreed{value} | Disputed | Insufficient</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>dispatch the task to the K machines; collect results with a timeout</li>
+              <li>on <code>Agreed</code>, accept; else re-run with a fresh assignment</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — task + pool + seed in; a K-subset out; results in; a <code>Verdict</code> out. "K=5, 3 honest agree, 2 lie → <code>Agreed</code> on the honest value" is a pure test &mdash; untrusted correctness, proven without an adversary.</p>
+      </div>
+
+      <!-- REPUTATION -->
+      <div class="component">
+        <div class="cmp-name"><h3>Reputation gating</h3><span class="cmp-tag new">verification · new</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — track how much each identity has earned trust, and set how much verification a machine needs. A Sybil earns no shortcut &mdash; every fresh identity starts at zero.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> update(rep Reputation, agreed <span class="ty">bool</span>) Reputation
+  <span class="cm">// rises on honest agreement, falls on a lie</span>
+<span class="kw">func</span> weight(rep Reputation) <span class="ty">float</span>
+<span class="kw">func</span> needsK(rep Reputation, tier Tier) <span class="ty">int</span>
+  <span class="cm">// more replicas for low-reputation identities</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>persist the reputation store, keyed by SPIFFE identity</li>
+              <li>read on assignment, write after each verdict</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — reputation + agreement in; new reputation / weight / K out. Monotonicity ("honest work never lowers reputation") is a property test; the zero-start rule is what makes faking many identities pointless.</p>
+      </div>
+
+      <!-- HONEYPOT -->
+      <div class="component">
+        <div class="cmp-name"><h3>Honeypot spot-checks</h3><span class="cmp-tag new">verification · new</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — occasionally hand out a task whose answer is already known, and blacklist any identity that lies about it. No account needed to catch a liar.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> shouldProbe(rep Reputation, rng <span class="ty">float</span>) <span class="ty">bool</span>
+<span class="kw">func</span> check(claimed Result, known Result) Probe
+  <span class="cm">// Probe = Match | Lie</span>
+<span class="kw">func</span> onLie(id SpiffeID) Action   <span class="cm">// Blacklist</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>inject a known-answer task at the chosen rate</li>
+              <li>compare the claim; blacklist the identity/origin on a lie</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — reputation + rng in, a probe decision out; claimed vs known in, an action out. All pure &mdash; "a lie on a known answer is always caught" is a one-line test.</p>
+      </div>
+
+      <!-- ENROLLMENT + SIGNING -->
+      <div class="component">
+        <div class="cmp-name"><h3>Anonymous enrollment &amp; signing</h3><span class="cmp-tag delta">security · delta</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — let anyone join the open tier without an account (optionally gated by proof-of-work) and refuse unsigned workloads. Extends the P0/brief enrollment for the untrusted case.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> admitOpen(req JoinReq, pow PowProof,
+               cfg PowCfg) Admit
+  <span class="cm">// verify PoW; Accept{open-tier id} | Reject</span>
+<span class="kw">func</span> verifySignature(wl <span class="ty">[]byte</span>, sig Sig, key PubKey) <span class="ty">bool</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>SPIRE issues the open-tier mTLS identity on <code>Accept</code></li>
+              <li>distribute signing public keys; verify before dispatch</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — join request + PoW in; an admit decision out. Verifying a proof-of-work or a signature is pure crypto given the inputs; only issuing the certificate is I/O.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 03 PAYOFF -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>The safety guarantees are property tests</h2></div>
+    <div class="sec-body">
+      <p class="measure">Because every security decision is a pure function, the properties that make untrusted compute safe are checkable in a test harness &mdash; no adversarial cluster, no live attacker. These are the assertions that P3 stands or falls on:</p>
+      <ul class="props">
+        <li><span class="pk">verdict</span><span class="pt"><b>A minority of liars can't flip an <code>Agreed</code> result</b> when the honest machines hold the majority of the K-sample.</span></li>
+        <li><span class="pk">assign</span><span class="pt"><b>Assignment is uniform over the pool</b> for any seed &mdash; so colluding Sybils rarely co-occupy a single task's K-set.</span></li>
+        <li><span class="pk">update</span><span class="pt"><b>Reputation is monotonic in honest agreement</b>, and every fresh identity starts at zero &mdash; faking many identities buys nothing.</span></li>
+        <li><span class="pk">honeypot</span><span class="pt"><b>A lie on a known answer is always caught</b> and always blacklists the lying identity.</span></li>
+        <li><span class="pk">grants</span><span class="pt"><b>A task receives exactly the WASI capabilities it declared</b> and no others.</span></li>
+      </ul>
+      <div class="note"><span class="nt"><b>This is why the tier is safe to open.</b> The brief argued the untrusted-machine threat collapses to "lie about your own task, possibly at scale." P3 answers each of those with a pure decision whose guarantee is a unit test &mdash; the safety isn't hoped-for, it's asserted.</span></div>
+    </div>
+  </section>
+
+  <!-- 04 DEFERRED -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>What P3 defers</h2></div>
+    <div class="sec-body">
+      <p class="measure">P3 opens the swarm to the public without moving the FCIS line: a new execution path (WASM), plus verification cores (assign, verdict, reputation, honeypot) and their thin shells. The last phase, <strong>P4</strong>, is <strong>scale infrastructure</strong> &mdash; the FoundationDB registry, observability aggregation, rolling upgrades, and the sustained 1M-node validation &mdash; followed by production hardening (P5) and self-tuning (P6). None of them change a driver <code>step</code> or a verdict; they harden the shell and scale the stores underneath.</p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot-inner">
+      <span>Swarm · P3 component design</span>
+      <span>untrusted machines · quorum-verified · same FCIS line</span>
+    </div>
+  </footer>
+
+</div>
+
+</body>
+</html>

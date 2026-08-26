@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swarm P1 Components</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bg:#F1F4F3; --surface:#FFFFFF; --surface-2:#F7F9F8; --ink:#14201D; --muted:#566964;
+    --line:#DCE4E1; --line-2:#C5D1CD; --accent:#0E8F84; --accent-sf:#0e8f8416;
+    --plane:#3B5B8C; --plane-sf:#3b5b8c14; --good:#2E8256; --warn:#B26F13; --crit:#BC4130;
+    --shadow:0 1px 2px #14201d0c, 0 8px 24px -12px #14201d1f;
+  }
+  :root:not([data-theme="light"]) { @media (prefers-color-scheme: dark) {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  } }
+  :root[data-theme="dark"] {
+    --bg:#0D1412; --surface:#141F1C; --surface-2:#101917; --ink:#E7EEEB; --muted:#93A6A0;
+    --line:#243330; --line-2:#2F423D; --accent:#2ED3BE; --accent-sf:#2ed3be1c;
+    --plane:#82A6DC; --plane-sf:#82a6dc1c; --good:#4BB37C; --warn:#D69A3E; --crit:#E0715E;
+    --shadow:0 1px 2px #00000030, 0 10px 30px -14px #00000066;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--bg); color:var(--ink); font-family:"IBM Plex Sans",system-ui,sans-serif;
+    font-size:17px; line-height:1.62; margin:0; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1040px; margin:0 auto; padding:0 24px; }
+  .measure { max-width:720px; }
+
+  header.masthead { border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,var(--surface-2),var(--bg)); }
+  .masthead-inner { padding:26px 24px 22px; max-width:1040px; margin:0 auto;
+    display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+  .brand { display:flex; align-items:center; gap:13px; }
+  .glyph { width:38px; height:38px; flex:none; color:var(--accent); }
+  .brand-text { display:flex; flex-direction:column; line-height:1.1; }
+  .brand-name { font-weight:700; font-size:20px; letter-spacing:-0.02em; }
+  .brand-sub { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    letter-spacing:0.02em; margin-top:3px; }
+  .masthead-meta { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+    text-align:right; line-height:1.7; }
+  .masthead-meta b { color:var(--ink); font-weight:600; }
+
+  .hero { padding:56px 0 26px; }
+  .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-weight:500;
+    letter-spacing:0.16em; text-transform:uppercase; color:var(--accent);
+    display:flex; align-items:center; gap:10px; }
+  .eyebrow::before { content:""; width:26px; height:1px; background:var(--accent); display:inline-block; }
+  h1 { font-size:clamp(32px,5.4vw,48px); line-height:1.04; letter-spacing:-0.033em; font-weight:700;
+    margin:20px 0 0; text-wrap:balance; max-width:17ch; }
+  .lede { font-size:clamp(17px,2.3vw,20px); color:var(--muted); margin:22px 0 0; max-width:52ch;
+    text-wrap:pretty; }
+  .lede b { color:var(--ink); font-weight:600; }
+
+  section { padding:38px 0; border-top:1px solid var(--line); margin-top:36px; }
+  .sec-head { display:flex; gap:18px; align-items:baseline; margin-bottom:8px; }
+  .sec-num { font-family:"IBM Plex Mono",monospace; font-size:14px; font-weight:600; color:var(--accent);
+    flex:none; padding-top:4px; }
+  h2 { font-size:clamp(23px,3.4vw,31px); letter-spacing:-0.025em; font-weight:700; margin:0;
+    text-wrap:balance; line-height:1.12; }
+  h3 { font-size:19px; letter-spacing:-0.01em; font-weight:600; margin:0 0 4px; }
+  p { margin:14px 0; }
+  .sec-body { padding-left:0; }
+  @media (min-width:720px){ .sec-body { padding-left:47px; } }
+  strong { font-weight:600; }
+  code,.mono { font-family:"IBM Plex Mono",monospace; font-size:0.88em; }
+  p code,li code { background:var(--accent-sf); color:var(--ink); padding:1px 6px; border-radius:5px;
+    font-size:0.83em; }
+
+  figure { margin:28px 0 8px; }
+  .figframe { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:26px 24px 18px; box-shadow:var(--shadow); overflow-x:auto; }
+  figcaption { font-size:14px; color:var(--muted); margin-top:14px; line-height:1.5; max-width:68ch; }
+  figcaption b { color:var(--ink); font-weight:600; }
+  svg { display:block; max-width:100%; height:auto; }
+  svg text { font-family:"IBM Plex Mono",monospace; }
+  .d-box { fill:var(--surface-2); stroke:var(--line-2); stroke-width:1.5; }
+  .d-core { fill:var(--accent-sf); stroke:var(--accent); stroke-width:1.6; }
+  .d-plane { fill:var(--plane-sf); stroke:var(--plane); stroke-width:1.5; }
+  .d-lbl { fill:var(--ink); font-size:13px; font-weight:500; }
+  .d-lbl-s { fill:var(--muted); font-size:11.5px; }
+  .d-lbl-a { fill:var(--accent); font-size:11.5px; font-weight:600; }
+  .d-lbl-p { fill:var(--plane); font-size:11.5px; font-weight:600; }
+  .d-flow { stroke:var(--muted); stroke-width:1.6; fill:none; }
+  .d-flow-a { stroke:var(--accent); stroke-width:1.8; fill:none; }
+  .d-dash { stroke:var(--plane); stroke-width:1.5; fill:none; stroke-dasharray:5 4; }
+
+  .code-card { background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    overflow:hidden; box-shadow:var(--shadow); margin:16px 0; }
+  .code-top { display:flex; align-items:center; gap:8px; padding:9px 15px; border-bottom:1px solid var(--line);
+    background:var(--surface-2); }
+  .code-top .fn { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  pre { margin:0; padding:16px 18px; overflow-x:auto; font-family:"IBM Plex Mono",monospace;
+    font-size:13px; line-height:1.65; color:var(--ink); }
+  .ty { color:var(--accent); }
+  .kw { color:var(--plane); }
+  .cm { color:var(--muted); }
+
+  .component { background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:22px 22px 18px; box-shadow:var(--shadow); margin:18px 0; }
+  .component > .cmp-resp { margin:6px 0 0; color:var(--muted); font-size:15px; }
+  .component > .cmp-resp b { color:var(--ink); }
+  .cmp-name { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .cmp-tag { font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.07em; color:var(--muted); border:1px solid var(--line-2); border-radius:20px;
+    padding:2px 9px; }
+  .cmp-tag.delta { color:var(--warn); border-color:var(--warn); }
+  .fcis-split { display:grid; grid-template-columns:1fr; gap:14px; margin-top:16px; }
+  @media (min-width:760px){ .fcis-split { grid-template-columns:1fr 1fr; } }
+  .fcis-core, .fcis-shell { border-radius:12px; padding:14px 15px; }
+  .fcis-core { background:var(--accent-sf); border:1px solid var(--accent); }
+  .fcis-shell { background:var(--surface-2); border:1px solid var(--line-2); }
+  .fcis-head { font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px; display:flex; gap:7px; align-items:center; }
+  .fcis-core .fcis-head { color:var(--accent); }
+  .fcis-shell .fcis-head { color:var(--muted); }
+  .fcis-core pre { background:transparent; padding:2px 0; font-size:12.5px; }
+  .fcis-shell ul { margin:0; padding-left:17px; }
+  .fcis-shell li { font-size:13.5px; color:var(--ink); line-height:1.5; margin:3px 0; }
+  .boundary { margin-top:14px; font-size:13.5px; color:var(--muted); }
+  .boundary b { color:var(--ink); font-weight:600; }
+
+  .tbl-wrap { overflow-x:auto; margin:20px 0; border:1px solid var(--line); border-radius:12px;
+    box-shadow:var(--shadow); }
+  table { border-collapse:collapse; width:100%; font-size:14px; min-width:520px; }
+  th,td { text-align:left; padding:12px 16px; border-bottom:1px solid var(--line); vertical-align:top; }
+  thead th { font-family:"IBM Plex Mono",monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.07em; color:var(--muted); font-weight:500; background:var(--surface-2); }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr { background:var(--surface); }
+  td.mono { font-family:"IBM Plex Mono",monospace; }
+
+  .note { display:flex; gap:13px; align-items:flex-start; background:var(--surface); border:1px solid var(--line);
+    border-left:3px solid var(--accent); border-radius:10px; padding:15px 17px; box-shadow:var(--shadow);
+    margin:18px 0; }
+  .note .nt { font-size:14.5px; line-height:1.55; }
+  .note .nt b { font-weight:600; }
+
+  footer { border-top:1px solid var(--line); margin-top:52px; padding:28px 0 56px; }
+  .foot-inner { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+</style>
+</head>
+<body>
+
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand">
+      <svg class="glyph" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <circle cx="20" cy="20" r="16.5" stroke="currentColor" stroke-width="1.6" opacity="0.55"/>
+        <ellipse cx="20" cy="20" rx="7" ry="16.5" stroke="currentColor" stroke-width="1.4" opacity="0.8"/>
+        <path d="M4 20 H36 M6.5 12 H33.5 M6.5 28 H33.5" stroke="currentColor" stroke-width="1.3" opacity="0.7"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">Swarm · P1</span>
+        <span class="brand-sub">component design · multi-region reach</span>
+      </div>
+    </div>
+    <div class="masthead-meta">
+      <div>phase 1 of 6</div>
+      <div><b>extends P0</b> · same FCIS line</div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero measure">
+    <div class="eyebrow">Component Design · Phase 1</div>
+    <h1>Multi-region, without moving the FCIS line.</h1>
+    <p class="lede">P1 spreads the swarm across regions and shards the control plane per region, over a thin, <b>eventually-consistent</b> global layer. Every new piece is exactly what P0 promised: a new pure <b>core</b> (a decision) plus new <b>shell</b> I/O (cross-region transport). No P0 boundary is disturbed.</p>
+  </div>
+
+  <!-- 01 DELTA -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>What changes from P0</h2></div>
+    <div class="sec-body">
+      <p class="measure">P0 was one region. P1 makes the control plane <strong>regional</strong> &mdash; each region runs its own P0 control plane (planner, registry, rendezvous, mitosis) &mdash; and adds a thin <strong>global routing layer</strong> above them. Four deltas, no rewrites:</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Piece</th><th>P0</th><th>P1 delta</th></tr></thead>
+        <tbody>
+          <tr><td>Control plane</td><td>single</td><td>one per region; publishes a regional summary upward</td></tr>
+          <tr><td>Routing</td><td>&mdash;</td><td>new global layer: route a job to a region, merge regional views</td></tr>
+          <tr><td>Placement</td><td>any local cell</td><td>may spill an independent task to a peer region when local is full</td></tr>
+          <tr><td>Agent failover</td><td>emits <code>Failover</code></td><td>a decision fills it in: which region to dial next</td></tr>
+        </tbody>
+      </table></div>
+
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 900 330" role="img" aria-label="A submit enters the global routing layer, which routes the job to a region. Each region runs its own control plane over its cells, and agents dial their region's rendezvous. Regions publish summaries back up to the global layer.">
+            <defs>
+              <marker id="sm" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker>
+              <marker id="sa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/></marker>
+              <marker id="sp" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--plane)"/></marker>
+            </defs>
+            <text class="d-lbl-s" x="30" y="52" font-size="11">submit</text>
+            <path class="d-flow-a" d="M70 46 L206 46" marker-end="url(#sa)"/>
+            <rect class="d-box" x="208" y="26" width="484" height="44" rx="11"/>
+            <text class="d-lbl" x="450" y="46" text-anchor="middle" font-weight="600" font-size="12">GLOBAL ROUTING LAYER</text>
+            <text class="d-lbl-s" x="450" y="61" text-anchor="middle" font-size="10.5">route job → region · merge regional views (eventually consistent)</text>
+
+            <path class="d-flow-a" d="M330 70 L250 108" marker-end="url(#sa)"/>
+            <path class="d-flow-a" d="M570 70 L650 108" marker-end="url(#sa)"/>
+            <text class="d-lbl-a" x="300" y="92" text-anchor="middle" font-size="10">route</text>
+            <path class="d-dash" d="M215 108 L300 72" marker-end="url(#sp)"/>
+            <path class="d-dash" d="M685 108 L600 72" marker-end="url(#sp)"/>
+            <text class="d-lbl-p" x="628" y="92" text-anchor="middle" font-size="10">summaries</text>
+
+            <rect class="d-plane" x="70" y="110" width="330" height="86" rx="12"/>
+            <text class="d-lbl-p" x="90" y="134" font-weight="600" font-size="12">REGION · us-east</text>
+            <text class="d-lbl-s" x="90" y="154" font-size="11">planner · registry · rendezvous · mitosis</text>
+            <text class="d-lbl-s" x="90" y="174" font-size="11">(the P0 control plane, region-scoped)</text>
+            <rect class="d-plane" x="500" y="110" width="330" height="86" rx="12"/>
+            <text class="d-lbl-p" x="520" y="134" font-weight="600" font-size="12">REGION · eu-west</text>
+            <text class="d-lbl-s" x="520" y="154" font-size="11">planner · registry · rendezvous · mitosis</text>
+            <text class="d-lbl-s" x="520" y="174" font-size="11">(the P0 control plane, region-scoped)</text>
+
+            <path class="d-flow" d="M150 196 L150 224" marker-end="url(#sm)"/>
+            <path class="d-flow" d="M300 196 L300 224" marker-end="url(#sm)"/>
+            <path class="d-flow" d="M580 196 L580 224" marker-end="url(#sm)"/>
+            <path class="d-flow" d="M730 196 L730 224" marker-end="url(#sm)"/>
+
+            <rect class="d-core" x="86" y="226" width="130" height="46" rx="10"/>
+            <text class="d-lbl-a" x="151" y="253" text-anchor="middle" font-size="11">cell</text>
+            <rect class="d-core" x="236" y="226" width="130" height="46" rx="10"/>
+            <text class="d-lbl-a" x="301" y="253" text-anchor="middle" font-size="11">cell</text>
+            <rect class="d-core" x="516" y="226" width="130" height="46" rx="10"/>
+            <text class="d-lbl-a" x="581" y="253" text-anchor="middle" font-size="11">cell</text>
+            <rect class="d-core" x="666" y="226" width="130" height="46" rx="10"/>
+            <text class="d-lbl-a" x="731" y="253" text-anchor="middle" font-size="11">cell</text>
+
+            <text class="d-lbl-s" x="450" y="302" text-anchor="middle" font-size="10.5">agents dial their own region's rendezvous · independent tasks may spill region → region</text>
+          </svg>
+        </div>
+        <figcaption><b>The same P0 control plane, now one per region, under a thin router.</b> Routing and the merged global view are new; everything inside a region is the P0 design unchanged. Regions push summaries up; the global layer never sits on the hot path.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 02 CONSISTENCY -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>The consistency model is a pure merge</h2></div>
+    <div class="sec-body">
+      <p class="measure">Multi-region introduces the one new hazard P0 didn't have: regions disagree in transit. The design keeps this <strong>off the hot path</strong> (a region schedules from its own store &mdash; brief rule A1) and confines the reconciliation to a single pure function, <code>mergeGlobal</code>, that is <strong>commutative, associative, and idempotent</strong>. Those three laws are exactly what makes eventual consistency converge &mdash; and they're a gift to FCIS, because they're algebraic properties you can property-test without a network.</p>
+      <figure>
+        <div class="figframe">
+          <svg viewBox="0 0 820 190" role="img" aria-label="Regional summaries arriving in any order, including duplicates, feed a pure mergeGlobal function that always produces the same global view.">
+            <defs><marker id="cm" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/></marker></defs>
+            <rect class="d-plane" x="40" y="30" width="150" height="34" rx="8"/><text class="d-lbl-s" x="115" y="52" text-anchor="middle" font-size="11">summary A</text>
+            <rect class="d-plane" x="40" y="78" width="150" height="34" rx="8"/><text class="d-lbl-s" x="115" y="100" text-anchor="middle" font-size="11">summary B</text>
+            <rect class="d-plane" x="40" y="126" width="150" height="34" rx="8"/><text class="d-lbl-s" x="115" y="148" text-anchor="middle" font-size="11">A again (dup)</text>
+            <path class="d-flow" d="M190 47 L360 82" marker-end="url(#cm)"/>
+            <path class="d-flow" d="M190 95 L360 95" marker-end="url(#cm)"/>
+            <path class="d-flow" d="M190 143 L360 108" marker-end="url(#cm)"/>
+            <rect class="d-core" x="362" y="62" width="230" height="66" rx="12"/>
+            <text class="d-lbl-a" x="477" y="90" text-anchor="middle" font-weight="600" font-size="12">mergeGlobal</text>
+            <text class="d-lbl-s" x="477" y="110" text-anchor="middle" font-size="10.5">commutative · idempotent</text>
+            <path class="d-flow-a" d="M592 95 L668 95" marker-end="url(#cm)"/>
+            <rect class="d-box" x="670" y="68" width="120" height="54" rx="11"/>
+            <text class="d-lbl" x="730" y="92" text-anchor="middle" font-size="12">GlobalView</text>
+            <text class="d-lbl-s" x="730" y="109" text-anchor="middle" font-size="10.5">converges</text>
+          </svg>
+        </div>
+        <figcaption><b>Order and duplicates don't matter, by law.</b> Because the merge obeys the algebraic laws, summaries can arrive reordered or repeated and the global view still converges &mdash; the correctness of eventual consistency reduces to a property test on one pure function.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 03 COMPONENTS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>New &amp; changed components</h2></div>
+    <div class="sec-body">
+
+      <!-- GLOBAL ROUTING -->
+      <div class="component">
+        <div class="cmp-name"><h3>Global routing layer</h3><span class="cmp-tag">global · new</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — route each job to a region and hold the merged, eventually-consistent view of all regions.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> route(job JobSpec, regions <span class="ty">[]RegionView</span>) Route
+  <span class="cm">// Route = To{RegionID} | Spread{[]RegionID} | NoRegion</span>
+<span class="kw">func</span> mergeGlobal(v GlobalView, s RegionalSummary) GlobalView
+  <span class="cm">// commutative · associative · idempotent</span>
+<span class="kw">func</span> diverged(v GlobalView, now Instant) <span class="ty">[]RegionID</span>
+  <span class="cm">// which regions look stale (for observability)</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>receive <code>Submit</code> at the edge; forward to the routed region's planner</li>
+              <li>gossip/replicate <code>RegionalSummary</code> across regions</li>
+              <li>apply <code>mergeGlobal</code>; serve the aggregate view</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — <code>JobSpec</code> + <code>[]RegionView</code> in; a <code>Route</code> out. <code>mergeGlobal</code>'s laws are verified by property tests (feed shuffled, duplicated summaries → assert one fixed point), no cluster needed.</p>
+      </div>
+
+      <!-- REGIONAL CONTROL PLANE -->
+      <div class="component">
+        <div class="cmp-name"><h3>Regional control plane</h3><span class="cmp-tag delta">region · delta from P0</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — the P0 planner/registry/rendezvous/mitosis, now scoped to one region and publishing a summary upward. The P0 cores are unchanged; they simply operate on this region's snapshot.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="cm">// all P0 cores unchanged: admit, place, decide, apply …</span>
+<span class="kw">func</span> summarize(reg Registry) RegionalSummary
+  <span class="cm">// capacity · health · cell count for this region</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>everything the P0 control plane did, tagged with a <code>RegionID</code></li>
+              <li>periodically publish <code>summarize()</code> to the global layer</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — adds <code>RegionID</code> to identifiers; emits <code>RegionalSummary</code>. This is the proof of the FCIS promise: going regional added one pure function and one shell publish, and touched no existing core.</p>
+      </div>
+
+      <!-- CROSS-REGION PLACEMENT -->
+      <div class="component">
+        <div class="cmp-name"><h3>Cross-region placement</h3><span class="cmp-tag delta">planner · delta</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — for independent jobs, let a task spill to a peer region when the home region is full. Locality is preferred; only independent tasks may spill (tight jobs stay local in P2).</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> placeAcross(t Task, local <span class="ty">[]CellView</span>,
+                 peers <span class="ty">[]RegionView</span>) Placement
+  <span class="cm">// prefer local; Spill{RegionID} when local full</span>
+  <span class="cm">// and a peer has capacity; else NoCapacity</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>read local + peer snapshots (peers from the global view)</li>
+              <li>on <code>Spill</code>, forward the task to the peer region's queue</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — a task + local and peer snapshots in; a <code>Placement</code> (possibly <code>Spill</code>) out. Extends P0's <code>place</code>; the locality-first ranking is a pure, deterministic test.</p>
+      </div>
+
+      <!-- AGENT FAILOVER -->
+      <div class="component">
+        <div class="cmp-name"><h3>Agent · cross-region failover</h3><span class="cmp-tag delta">agent · delta</span></div>
+        <p class="cmp-resp"><b>Responsibility</b> — fill in the target of P0's <code>Failover</code>: when the home region won't answer, decide which region to dial next. The P0 registration state machine is unchanged &mdash; this only supplies the destination.</p>
+        <div class="fcis-split">
+          <div class="fcis-core"><div class="fcis-head">◆ Functional core · pure</div>
+<pre><span class="kw">func</span> selectRegion(known <span class="ty">[]RegionID</span>,
+             health <span class="ty">map</span>[RegionID]Health,
+             homeFirst <span class="ty">bool</span>, attempt <span class="ty">int</span>) RegionID
+  <span class="cm">// prefer home, then nearest healthy peer</span></pre>
+          </div>
+          <div class="fcis-shell"><div class="fcis-head">▟ Imperative shell · I/O</div>
+            <ul>
+              <li>keep the known-region list (cached from the global layer)</li>
+              <li>on the P0 <code>Failover</code> command, call <code>selectRegion</code> and dial it</li>
+              <li>carry the SPIFFE identity across the region switch</li>
+            </ul>
+          </div>
+        </div>
+        <p class="boundary"><b>Boundary</b> — known regions + health + attempt in; a <code>RegionID</code> out. "Home down, two peers up, prefer nearest" is a one-line unit test, and the P0 dial→enroll→join→heartbeat machine is reused verbatim.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 04 BARRIER SPIKE -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>The barrier spike (de-risking P2)</h2></div>
+    <div class="sec-body">
+      <p class="measure">P1 also carries a <strong>throwaway spike</strong>: a standalone prototype of the future <code>barrier</code> coordinator, run against a <em>fake</em> network to prove the mechanics before P2 builds it for real. It ships nothing &mdash; but it's written FCIS-first, so what it proves transfers directly.</p>
+      <div class="code-card">
+        <div class="code-top"><span class="fn">spike/barrier_core.go — the pure step, exercised with a fake shell</span></div>
+<pre><span class="kw">func</span> step(s BarrierState, ev BarrierEvent, now Instant) (BarrierState, <span class="ty">[]BarrierCmd</span>)
+  <span class="cm">// BarrierEvent = Done{worker,partial} | Deadline | Tick</span>
+  <span class="cm">// BarrierCmd   = AllReduce{partials} | Release{step} | Checkpoint | Evict{worker}</span>
+  <span class="cm">// release step N+1 only when every worker has reported Done, or a Deadline evicts a straggler</span></pre>
+      </div>
+      <div class="note"><span class="nt"><b>Why spike it now.</b> The barrier + checkpoint + mitosis-at-checkpoint interaction is the design's riskiest piece. Proving the pure <code>step</code> against a simulated set of workers (including an injected straggler and a mid-step loss) retires that risk in P1, so P2 is assembly, not discovery. The spike's core becomes the P2 core; only its fake shell is thrown away.</span></div>
+    </div>
+  </section>
+
+  <!-- 05 DEFERRED -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>What P1 still defers</h2></div>
+    <div class="sec-body">
+      <p class="measure">P1 is still <strong>independent-driver, trusted, native</strong> &mdash; it added reach, not capability. Tight coupling and the barrier/leader/message-passing drivers land in <strong>P2</strong> (the spike's core, productionized, plus checkpointing and gang scheduling); the WASM open tier and quorum/reputation verification land in <strong>P3</strong>; scale infrastructure in <strong>P4</strong>. Each remains, as here, a new pure core plus new shell I/O over the same boundary.</p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot-inner">
+      <span>Swarm · P1 component design</span>
+      <span>multi-region · same FCIS line as P0</span>
+    </div>
+  </footer>
+
+</div>
+
+</body>
+</html>
