@@ -1,0 +1,176 @@
+package controlplane
+
+import (
+	"time"
+
+	"github.com/msivraj/swarm/internal/core/mitosis"
+	"github.com/msivraj/swarm/internal/core/registry"
+	"github.com/msivraj/swarm/internal/model"
+)
+
+// reapLoop evicts agents that have gone quiet for longer than
+// cfg.HeartbeatTimeout. This is P0's failure detector: central, on a timer,
+// applying registry.AgentLeft — there is no gossip/SWIM dissemination here.
+func (s *Server) reapLoop() {
+	defer s.wg.Done()
+	ticker := time.NewTicker(s.cfg.HeartbeatSweep)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.reapOnce()
+		case <-s.stop:
+			return
+		}
+	}
+}
+
+// reapOnce evicts every agent whose last-seen instant is older than
+// cfg.HeartbeatTimeout, folding an AgentLeft event for each into the
+// registry.
+func (s *Server) reapOnce() {
+	now := s.now()
+	timeoutNS := s.cfg.HeartbeatTimeout.Nanoseconds()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for agent, last := range s.lastSeen {
+		if int64(now-last) < timeoutNS {
+			continue
+		}
+		cell, ok := s.agentCell[agent]
+		if !ok {
+			delete(s.lastSeen, agent)
+			continue
+		}
+		s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.AgentLeft, Cell: cell, Agent: registry.AgentID(agent)})
+		delete(s.lastSeen, agent)
+		delete(s.agentCell, agent)
+		if members := s.cellAgents[cell]; members != nil {
+			delete(members, agent)
+		}
+	}
+}
+
+// mitosisLoop drives the mitosis core on a timer: read the registry
+// snapshot + clock, call mitosis.Decide, execute the returned Split/Merge
+// commands.
+func (s *Server) mitosisLoop() {
+	defer s.wg.Done()
+	ticker := time.NewTicker(s.cfg.MitosisInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.mitosisOnce()
+		case <-s.stop:
+			return
+		}
+	}
+}
+
+// mitosisOnce reads a registry snapshot, calls mitosis.Decide, and executes
+// every returned command.
+func (s *Server) mitosisOnce() {
+	s.mu.Lock()
+	snapshot := registry.Snapshot(s.store.Registry())
+	cooldowns := make(map[model.CellID]model.Instant, len(s.cooldowns))
+	for id, at := range s.cooldowns {
+		cooldowns[id] = at
+	}
+	s.mu.Unlock()
+
+	now := s.now()
+	for _, cmd := range mitosis.Decide(snapshot, s.cfg.MitosisThresholds, cooldowns, now) {
+		switch cmd.Op {
+		case mitosis.Split:
+			s.executeSplit(cmd.Cell, now)
+		case mitosis.Merge:
+			s.executeMerge(cmd.Cell, cmd.Other, now)
+		}
+	}
+}
+
+// executeSplit carries out a mitosis.Split command: it forms two new cells,
+// dividing cell's current capacity and membership between them, then tears
+// down cell. The registry core has no "split" primitive of its own — it
+// only knows CellUp/CellDown/CapacityChanged/AgentJoined/AgentLeft — so the
+// shell composes those into the split, using its own agent<->cell
+// bookkeeping (recordJoinLocked's cellAgents) to know which agents to move,
+// since registry.Snapshot exposes only aggregate cell sizes.
+func (s *Server) executeSplit(cell model.CellID, now model.Instant) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	agents := sortedAgents(s.cellAgents[cell])
+	capacity := cellCapacity(registry.Snapshot(s.store.Registry()), cell)
+	if capacity == 0 {
+		return // cell no longer exists (e.g. raced with a merge); nothing to split
+	}
+
+	half := len(agents) / 2
+	groupA, groupB := agents[:half], agents[half:]
+	capA := capacity / 2
+	capB := capacity - capA
+
+	idA, idB := s.newCellIDLocked(), s.newCellIDLocked()
+	s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.CellUp, Cell: idA, Capacity: capA})
+	s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.CellUp, Cell: idB, Capacity: capB})
+	s.moveAgentsLocked(groupA, idA)
+	s.moveAgentsLocked(groupB, idB)
+	s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.CellDown, Cell: cell})
+
+	delete(s.cellAgents, cell)
+	delete(s.cooldowns, cell)
+	s.cooldowns[idA] = now
+	s.cooldowns[idB] = now
+}
+
+// executeMerge carries out a mitosis.Merge command: it forms one new cell
+// holding a's and b's combined capacity and membership, then tears down a
+// and b. See executeSplit's doc for why this is composed from the registry
+// core's primitives rather than a single "merge" event.
+func (s *Server) executeMerge(a, b model.CellID, now model.Instant) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	snapshot := registry.Snapshot(s.store.Registry())
+	capA, capB := cellCapacity(snapshot, a), cellCapacity(snapshot, b)
+	if capA == 0 || capB == 0 {
+		return // one side no longer exists (e.g. raced with another split); nothing to merge
+	}
+
+	agentsA := sortedAgents(s.cellAgents[a])
+	agentsB := sortedAgents(s.cellAgents[b])
+
+	merged := s.newCellIDLocked()
+	s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.CellUp, Cell: merged, Capacity: capA + capB})
+	s.moveAgentsLocked(agentsA, merged)
+	s.moveAgentsLocked(agentsB, merged)
+	s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.CellDown, Cell: a})
+	s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.CellDown, Cell: b})
+
+	delete(s.cellAgents, a)
+	delete(s.cellAgents, b)
+	delete(s.cooldowns, a)
+	delete(s.cooldowns, b)
+	s.cooldowns[merged] = now
+}
+
+// moveAgentsLocked folds an AgentJoined event for each agent into dest and
+// updates the shell's agent<->cell bookkeeping to match. Callers must hold
+// s.mu.
+func (s *Server) moveAgentsLocked(agents []string, dest model.CellID) {
+	if len(agents) == 0 {
+		return
+	}
+	if s.cellAgents[dest] == nil {
+		s.cellAgents[dest] = make(map[string]struct{})
+	}
+	for _, agent := range agents {
+		s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.AgentJoined, Cell: dest, Agent: registry.AgentID(agent)})
+		s.cellAgents[dest][agent] = struct{}{}
+		s.agentCell[agent] = dest
+	}
+}

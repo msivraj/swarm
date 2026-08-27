@@ -1,0 +1,155 @@
+// Package controlplane is the P0 control-plane shell: a gRPC server
+// (transport.ControlPlaneServer) whose handlers gather requests, call the
+// pure cores (admission, placement, registry, rendezvous, mitosis,
+// templates), and execute the resulting decisions against a store.Store. It
+// also owns two background loops — a membership reaper and a mitosis ticker
+// — that read the clock and drive the same cores on a timer.
+//
+// Membership is CENTRAL in P0: a dialing agent is admitted by JoinAgent
+// applying a registry.AgentJoined event, and a missed heartbeat is evicted
+// by the reaper applying registry.AgentLeft. There is no gossip/SWIM here —
+// that is deferred to P1 (see the phase doc's "gossip" wording, which does
+// not apply yet).
+package controlplane
+
+import (
+	"fmt"
+	"net"
+	"sort"
+	"sync"
+
+	"google.golang.org/grpc"
+
+	"github.com/msivraj/swarm/internal/core/registry"
+	"github.com/msivraj/swarm/internal/model"
+	"github.com/msivraj/swarm/internal/shell/store"
+	"github.com/msivraj/swarm/internal/shell/transport"
+)
+
+// Server implements transport.ControlPlaneServer. It holds the store and the
+// mutable bookkeeping the shell needs that the store does not: per-agent
+// last-contact times, the agent<->cell membership this shell learned from
+// JoinAgent (the registry core folds events but does not expose per-cell
+// membership back out), mitosis cooldown stamps, and the task->job index
+// SubmitJob populates so ReportResult can tell when a job is complete.
+//
+// mu guards every mutable field below, including the registry mutations
+// (store.Registry/store.SetRegistry) driven by JoinAgent, the reaper, and
+// the mitosis loop, so those two loops and concurrent RPCs never race folding
+// events into the registry.
+type Server struct {
+	transport.UnimplementedControlPlaneServer
+
+	store store.Store
+	cfg   Config
+	now   func() model.Instant
+
+	grpcServer *grpc.Server
+	stop       chan struct{}
+	wg         sync.WaitGroup
+
+	mu         sync.Mutex
+	lastSeen   map[string]model.Instant             // agent -> last Heartbeat/JoinAgent instant
+	agentCell  map[string]model.CellID              // agent -> the cell it currently belongs to
+	cellAgents map[model.CellID]map[string]struct{} // cell -> its member agents
+	cooldowns  map[model.CellID]model.Instant       // cell -> last mitosis resize instant
+	taskJob    map[model.TaskID]model.JobID         // task -> owning job, learned at SubmitJob
+	taskTotal  map[model.JobID]int                  // job -> total tasks admitted for it
+	nextCellID int
+	nextJobID  int
+}
+
+// New returns a Server ready to Serve. now supplies the clock (and the
+// mitosis/reaper loops' notion of "current time") as data — the server never
+// reads time.Now itself outside this injected function, keeping every
+// decision it drives through the pure cores reproducible from (state, event,
+// now) triples.
+func New(st store.Store, cfg Config, now func() model.Instant) *Server {
+	return &Server{
+		store:      st,
+		cfg:        cfg,
+		now:        now,
+		stop:       make(chan struct{}),
+		lastSeen:   make(map[string]model.Instant),
+		agentCell:  make(map[string]model.CellID),
+		cellAgents: make(map[model.CellID]map[string]struct{}),
+		cooldowns:  make(map[model.CellID]model.Instant),
+		taskJob:    make(map[model.TaskID]model.JobID),
+		taskTotal:  make(map[model.JobID]int),
+	}
+}
+
+// Serve registers the ControlPlane service on lis, starts the reaper and
+// mitosis background loops, and blocks serving RPCs until the gRPC server
+// stops (via Stop or lis closing). It returns the error grpc.Server.Serve
+// returns.
+func (s *Server) Serve(lis net.Listener) error {
+	s.grpcServer = grpc.NewServer()
+	transport.RegisterControlPlaneServer(s.grpcServer, s)
+
+	s.wg.Add(2)
+	go s.reapLoop()
+	go s.mitosisLoop()
+
+	err := s.grpcServer.Serve(lis)
+	close(s.stop)
+	s.wg.Wait()
+	return err
+}
+
+// Stop gracefully stops the gRPC server, which in turn causes Serve to
+// return and the background loops to exit.
+func (s *Server) Stop() {
+	if s.grpcServer != nil {
+		s.grpcServer.GracefulStop()
+	}
+}
+
+// applyRegistryEventLocked folds ev into the store's registry and persists
+// the result. Callers must hold s.mu.
+func (s *Server) applyRegistryEventLocked(ev registry.RegistryEvent) []registry.Change {
+	reg := s.store.Registry()
+	newReg, changes := registry.Apply(reg, ev)
+	// memStore.SetRegistry only ever errors on a malformed key, which
+	// RegistryEvent (built entirely from server-generated or validated IDs)
+	// never carries; there is nothing more useful to do with the error here
+	// than the shell equivalent of a bug report, so it is intentionally not
+	// surfaced to the RPC caller, whose request already succeeded logically.
+	_ = s.store.SetRegistry(newReg)
+	return changes
+}
+
+// newCellID returns a fresh, unique CellID. Callers must hold s.mu.
+func (s *Server) newCellIDLocked() model.CellID {
+	s.nextCellID++
+	return model.CellID(fmt.Sprintf("cell-%d", s.nextCellID))
+}
+
+// newJobID returns a fresh, unique JobID. Callers must hold s.mu.
+func (s *Server) newJobIDLocked() model.JobID {
+	s.nextJobID++
+	return model.JobID(fmt.Sprintf("job-%d", s.nextJobID))
+}
+
+// sortedAgents returns cellAgents[cell]'s members in a stable order, so the
+// split below divides deterministically instead of on Go's randomized map
+// iteration order. Callers must hold s.mu.
+func sortedAgents(set map[string]struct{}) []string {
+	out := make([]string, 0, len(set))
+	for a := range set {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// cellCapacity returns the capacity (Size+Free) of id in snap, or 0 if id is
+// not present.
+func cellCapacity(snap []model.CellView, id model.CellID) int {
+	for _, c := range snap {
+		if c.ID == id {
+			return c.Size + c.Free
+		}
+	}
+	return 0
+}
