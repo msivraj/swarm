@@ -1,6 +1,7 @@
 # Build output
 /swarm
 /swarmd
+/fcischeck
 *.out
 coverage.txt
 coverage.html
