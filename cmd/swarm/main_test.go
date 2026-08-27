@@ -194,6 +194,33 @@ func TestRunRPCError(t *testing.T) {
 	}
 }
 
+// TestDefaultAddrMatchesDaemonListen asserts the CLI's default dial target
+// matches swarmd control-plane's default --listen of ":7070", so a
+// freshly started daemon is reachable with no env var set.
+func TestDefaultAddrMatchesDaemonListen(t *testing.T) {
+	unset := func(string) string { return "" }
+	if got, want := controlPlaneAddr(unset), "localhost:7070"; got != want {
+		t.Fatalf("controlPlaneAddr(unset) = %q, want %q", got, want)
+	}
+	if defaultAddr != "localhost:7070" {
+		t.Fatalf("defaultAddr = %q, want %q", defaultAddr, "localhost:7070")
+	}
+}
+
+// TestControlPlaneAddrEnvOverride asserts SWARM_CONTROL_PLANE_ADDR still
+// overrides the default when set.
+func TestControlPlaneAddrEnvOverride(t *testing.T) {
+	getenv := func(key string) string {
+		if key != "SWARM_CONTROL_PLANE_ADDR" {
+			t.Fatalf("getenv called with %q, want %q", key, "SWARM_CONTROL_PLANE_ADDR")
+		}
+		return "example.com:9999"
+	}
+	if got, want := controlPlaneAddr(getenv), "example.com:9999"; got != want {
+		t.Fatalf("controlPlaneAddr(override) = %q, want %q", got, want)
+	}
+}
+
 func TestToTransportCoupling(t *testing.T) {
 	// Exercised indirectly by TestRunSubmitWithFlags; this covers the
 	// default branch directly.
