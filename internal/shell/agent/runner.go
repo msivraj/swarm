@@ -78,6 +78,14 @@ func (a *Agent) execPull(ctx context.Context) ([]corerunner.RunEvent, error) {
 	}
 	resp, err := client.PullTask(ctx, &transport.PullTaskRequest{Agent: a.cfg.AgentID})
 	if err != nil || !resp.HasTask {
+		// A PullTask error is already recoverable as written: it just waits
+		// and re-arms Idle to try again, on the same cadence as "no task
+		// ready." A transient RPC failure and an empty queue look identical
+		// from here, and both resolve the same way — retry later, picking
+		// up whatever client is current (the registration loop redials on
+		// its own next Heartbeat/JoinCell failure if the connection is
+		// actually dead; see rpcRetry's doc comment on Report/ReQueue for
+		// why those two can't be this relaxed about it).
 		if err := a.sleep(ctx, a.cfg.PullInterval); err != nil {
 			return nil, err
 		}
@@ -116,42 +124,60 @@ func (a *Agent) runProcess(ctx context.Context, task model.Task) (model.TaskResu
 }
 
 func (a *Agent) execReport(ctx context.Context, result model.TaskResult) error {
-	client, err := a.clients.get(ctx)
-	if err != nil {
+	return a.rpcRetry(ctx, func(client transport.ControlPlaneClient) error {
+		_, err := client.ReportResult(ctx, &transport.ReportResultRequest{
+			TaskId: string(result.TaskID),
+			Output: result.Output,
+			Ok:     result.OK,
+		})
 		return err
-	}
-	_, err = client.ReportResult(ctx, &transport.ReportResultRequest{
-		TaskId: string(result.TaskID),
-		Output: result.Output,
-		Ok:     result.OK,
 	})
-	return ctxOrErr(ctx, err)
 }
 
 func (a *Agent) execReQueue(ctx context.Context, task model.Task) ([]corerunner.RunEvent, error) {
-	client, err := a.clients.get(ctx)
+	err := a.rpcRetry(ctx, func(client transport.ControlPlaneClient) error {
+		_, err := client.ReportResult(ctx, &transport.ReportResultRequest{
+			TaskId: string(task.ID),
+			Ok:     false,
+		})
+		return err
+	})
 	if err != nil {
 		return nil, err
-	}
-	if _, err := client.ReportResult(ctx, &transport.ReportResultRequest{
-		TaskId: string(task.ID),
-		Ok:     false,
-	}); err != nil {
-		return nil, ctxOrErr(ctx, err)
 	}
 	return []corerunner.RunEvent{{Kind: corerunner.Idle}}, nil
 }
 
-// ctxOrErr prefers ctx's own error over err when ctx is done: a gRPC call
-// racing a context cancellation surfaces as an RPC-shaped error (e.g. "rpc
-// error: code = Canceled"), not the context.Canceled sentinel, so callers
-// that want a clean, comparable shutdown error should use this instead of
-// returning err directly.
-func ctxOrErr(ctx context.Context, err error) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
+// rpcRetry calls fn with the current control-plane client until it succeeds
+// or ctx is actually done (a real cancellation, checked via ctx.Err() —
+// mirroring execRegCommand's "RPC failures are reported as events, never as
+// Go errors" contract). A transient RPC failure is not returned to the
+// caller: unlike Pull, a Report or ReQueue that returns an error would lose
+// the outcome it is carrying, so it must keep retrying rather than fold into
+// an Idle pulse and move on. It re-fetches the client on every attempt
+// (a.clients.get), so once the registration loop's own failure detection —
+// unaffected by this loop — clears and redials a dead connection, the next
+// retry automatically picks up the fresh client without this loop touching
+// clientHolder itself. That keeps the two loops from racing to clear/redial
+// the same client, which is why this stays a "retry with what's current"
+// loop rather than one that also signals or clears on its own.
+func (a *Agent) rpcRetry(ctx context.Context, fn func(transport.ControlPlaneClient) error) error {
+	for {
+		client, err := a.clients.get(ctx)
+		if err != nil {
+			return err
+		}
+		if err := fn(client); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err := a.sleep(ctx, a.cfg.PullInterval); err != nil {
+				return err
+			}
+			continue
+		}
+		return nil
 	}
-	return err
 }
 
 func (a *Agent) sleep(ctx context.Context, d time.Duration) error {
