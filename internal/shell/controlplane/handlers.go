@@ -148,10 +148,18 @@ func (s *Server) PullTask(_ context.Context, _ *transport.PullTaskRequest) (*tra
 	}, nil
 }
 
-// ReportResult records the reported TaskResult and, once every task
+// ReportResult records the reported TaskResult and, once every DISTINCT task
 // SubmitJob admitted for the owning job has reported, merges the collected
 // results into the job's Aggregate via its template's merge function and
 // marks it done in the store.
+//
+// A task may legitimately report more than once (e.g. a retry after
+// failure); store.PutResult does not dedup (see the store package doc), so
+// this handler tracks the set of distinct TaskIDs that have reported per
+// job itself, and gates aggregation on that distinct count rather than on
+// the raw, possibly-inflated result count — otherwise a duplicate report
+// could push the count to total before every distinct task has reported,
+// aggregating on incomplete data.
 func (s *Server) ReportResult(_ context.Context, req *transport.ReportResultRequest) (*transport.ReportResultResponse, error) {
 	taskID := model.TaskID(req.GetTaskId())
 	result := model.TaskResult{TaskID: taskID, Output: req.GetOutput(), OK: req.GetOk()}
@@ -163,6 +171,12 @@ func (s *Server) ReportResult(_ context.Context, req *transport.ReportResultRequ
 	s.mu.Lock()
 	jobID, known := s.taskJob[taskID]
 	total := s.taskTotal[jobID]
+	if known {
+		if s.reportedTasks[jobID] == nil {
+			s.reportedTasks[jobID] = make(map[model.TaskID]struct{})
+		}
+		s.reportedTasks[jobID][taskID] = struct{}{}
+	}
 	s.mu.Unlock()
 	if !known {
 		// PutResult already validated the task, so this should not happen;
@@ -178,16 +192,26 @@ func (s *Server) ReportResult(_ context.Context, req *transport.ReportResultRequ
 }
 
 // maybeAggregate computes and persists jobID's Aggregate once at least total
-// results have been recorded for it, dispatching to the job's template merge
-// function by name.
+// DISTINCT tasks have reported a result for it, dispatching to the job's
+// template merge function by name. The gate reads the distinct-TaskID count
+// ReportResult maintains in s.reportedTasks rather than the raw length of
+// store.ResultsForJob's slice, so a duplicate report cannot prematurely
+// satisfy it; the results fed to the merge are likewise deduped to one entry
+// per distinct task (see dedupeTaskResults) so a duplicate cannot corrupt
+// the merged value either.
 func (s *Server) maybeAggregate(jobID model.JobID, total int) error {
+	s.mu.Lock()
+	distinct := len(s.reportedTasks[jobID])
+	s.mu.Unlock()
+	if distinct < total {
+		return nil
+	}
+
 	results, err := s.store.ResultsForJob(jobID)
 	if err != nil {
 		return err
 	}
-	if len(results) < total {
-		return nil
-	}
+	results = dedupeTaskResults(results)
 
 	spec, ok, err := s.store.GetJob(jobID)
 	if err != nil {
@@ -209,6 +233,27 @@ func (s *Server) maybeAggregate(jobID model.JobID, total int) error {
 	agg.JobID = jobID
 
 	return s.store.PutAggregate(agg)
+}
+
+// dedupeTaskResults collapses results to at most one entry per TaskID: a
+// later result for a TaskID already seen overwrites the earlier one in
+// place, keeping that TaskID's first-arrival position but its most recent
+// value, rather than appearing twice in what feeds the merge. store.PutResult
+// does not dedup (a retried task may legitimately report more than once), so
+// this is where a duplicate report stops from double-counting toward, or
+// corrupting, the merged Aggregate.
+func dedupeTaskResults(results []model.TaskResult) []model.TaskResult {
+	out := make([]model.TaskResult, 0, len(results))
+	index := make(map[model.TaskID]int, len(results))
+	for _, r := range results {
+		if i, ok := index[r.TaskID]; ok {
+			out[i] = r
+			continue
+		}
+		index[r.TaskID] = len(out)
+		out = append(out, r)
+	}
+	return out
 }
 
 // Ps reports fleet-wide counts: cells and machines from the registry

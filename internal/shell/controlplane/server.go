@@ -48,15 +48,16 @@ type Server struct {
 	stop       chan struct{}
 	wg         sync.WaitGroup
 
-	mu         sync.Mutex
-	lastSeen   map[string]model.Instant             // agent -> last Heartbeat/JoinAgent instant
-	agentCell  map[string]model.CellID              // agent -> the cell it currently belongs to
-	cellAgents map[model.CellID]map[string]struct{} // cell -> its member agents
-	cooldowns  map[model.CellID]model.Instant       // cell -> last mitosis resize instant
-	taskJob    map[model.TaskID]model.JobID         // task -> owning job, learned at SubmitJob
-	taskTotal  map[model.JobID]int                  // job -> total tasks admitted for it
-	nextCellID int
-	nextJobID  int
+	mu            sync.Mutex
+	lastSeen      map[string]model.Instant                  // agent -> last Heartbeat/JoinAgent instant
+	agentCell     map[string]model.CellID                   // agent -> the cell it currently belongs to
+	cellAgents    map[model.CellID]map[string]struct{}      // cell -> its member agents
+	cooldowns     map[model.CellID]model.Instant            // cell -> last mitosis resize instant
+	taskJob       map[model.TaskID]model.JobID              // task -> owning job, learned at SubmitJob
+	taskTotal     map[model.JobID]int                       // job -> total tasks admitted for it
+	reportedTasks map[model.JobID]map[model.TaskID]struct{} // job -> distinct task IDs that have reported at least one result
+	nextCellID    int
+	nextJobID     int
 }
 
 // New returns a Server ready to Serve. now supplies the clock (and the
@@ -66,16 +67,17 @@ type Server struct {
 // now) triples.
 func New(st store.Store, cfg Config, now func() model.Instant) *Server {
 	return &Server{
-		store:      st,
-		cfg:        cfg,
-		now:        now,
-		stop:       make(chan struct{}),
-		lastSeen:   make(map[string]model.Instant),
-		agentCell:  make(map[string]model.CellID),
-		cellAgents: make(map[model.CellID]map[string]struct{}),
-		cooldowns:  make(map[model.CellID]model.Instant),
-		taskJob:    make(map[model.TaskID]model.JobID),
-		taskTotal:  make(map[model.JobID]int),
+		store:         st,
+		cfg:           cfg,
+		now:           now,
+		stop:          make(chan struct{}),
+		lastSeen:      make(map[string]model.Instant),
+		agentCell:     make(map[string]model.CellID),
+		cellAgents:    make(map[model.CellID]map[string]struct{}),
+		cooldowns:     make(map[model.CellID]model.Instant),
+		taskJob:       make(map[model.TaskID]model.JobID),
+		taskTotal:     make(map[model.JobID]int),
+		reportedTasks: make(map[model.JobID]map[model.TaskID]struct{}),
 	}
 }
 
