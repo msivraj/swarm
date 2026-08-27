@@ -18,14 +18,13 @@ import (
 	"github.com/msivraj/swarm/internal/shell/transport"
 )
 
-// defaultAddr is used when SWARM_CONTROL_PLANE_ADDR is unset.
-const defaultAddr = "localhost:7777"
+// defaultAddr is used when SWARM_CONTROL_PLANE_ADDR is unset. It matches
+// swarmd control-plane's default --listen of ":7070" so the CLI can reach a
+// freshly started control plane with no env var set.
+const defaultAddr = "localhost:7070"
 
 func main() {
-	addr := os.Getenv("SWARM_CONTROL_PLANE_ADDR")
-	if addr == "" {
-		addr = defaultAddr
-	}
+	addr := controlPlaneAddr(os.Getenv)
 
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -39,6 +38,17 @@ func main() {
 		fmt.Fprintln(os.Stderr, "swarm:", err)
 		os.Exit(1)
 	}
+}
+
+// controlPlaneAddr resolves the control-plane dial target: the
+// SWARM_CONTROL_PLANE_ADDR environment variable if set, otherwise
+// defaultAddr. getenv is injected so this is testable without mutating the
+// process environment.
+func controlPlaneAddr(getenv func(string) string) string {
+	if addr := getenv("SWARM_CONTROL_PLANE_ADDR"); addr != "" {
+		return addr
+	}
+	return defaultAddr
 }
 
 // run executes one CLI invocation: parse argv with the pure cli core,
