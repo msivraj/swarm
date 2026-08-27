@@ -15,14 +15,19 @@ const (
 	NoCapacity Kind = iota
 	// Assign means the task is placed on Placement.Cell.
 	Assign
+	// Spill means the task is forwarded to peer region Placement.Region,
+	// because the local region was full and a peer had capacity. Added in
+	// P1 (issue #36); NoCapacity and Assign keep their P0 values.
+	Spill
 )
 
 // Placement is a placement decision the shell will execute. It is a tagged
-// union: Assign{Cell} | NoCapacity. Cores return Placements; they never carry
-// them out.
+// union: Assign{Cell} | Spill{Region} | NoCapacity. Cores return Placements;
+// they never carry them out.
 type Placement struct {
-	Kind Kind
-	Cell model.CellID // set when Kind == Assign
+	Kind   Kind
+	Cell   model.CellID   // set when Kind == Assign
+	Region model.RegionID // set when Kind == Spill
 }
 
 // Place picks a cell with free capacity for the task, or returns NoCapacity
@@ -40,6 +45,36 @@ func Place(_ model.Task, cells []model.CellView) Placement {
 	for _, c := range cells {
 		if c.Free > 0 {
 			return Placement{Kind: Assign, Cell: c.ID}
+		}
+	}
+	return Placement{Kind: NoCapacity}
+}
+
+// PlaceAcross extends Place with cross-region spill (P1, issue #36): it
+// prefers a local cell — reusing Place's first-fit scan so the local-branch
+// rule never diverges from P0's Place — and only when the local region is
+// full does it consider spilling to a peer region. Locality is preferred
+// over spilling, and only independent tasks reach this function at all: the
+// shell is responsible for calling PlaceAcross only for independent jobs
+// (Task carries no Coupling — that lives on JobSpec, out of a task's own
+// data); this core has no coupling check to make.
+//
+// Peer selection rule (left unspecified by the phase doc, resolved here):
+// among peers, choose the first in slice order with Free > 0 AND
+// Health == model.Healthy — deterministic first-fit, mirroring Place's own
+// tie-break convention (decide on slice order, not on region identity or
+// load). A Degraded or Unreachable peer is never chosen, even if it reports
+// free capacity, since its summary may be stale. If local has room, or no
+// peer qualifies, PlaceAcross returns Place's own result (Assign or
+// NoCapacity) — it never invents a decision Place would not have made for
+// the local-only case.
+func PlaceAcross(t model.Task, local []model.CellView, peers []model.RegionView) Placement {
+	if p := Place(t, local); p.Kind == Assign {
+		return p
+	}
+	for _, r := range peers {
+		if r.Free > 0 && r.Health == model.Healthy {
+			return Placement{Kind: Spill, Region: r.ID}
 		}
 	}
 	return Placement{Kind: NoCapacity}
