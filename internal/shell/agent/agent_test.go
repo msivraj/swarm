@@ -32,6 +32,8 @@ type fakeControlPlane struct {
 	heartbeats        int
 	failNextHeartbeat bool
 	taskPulled        bool
+	failNextReport    bool
+	failAllReports    bool
 
 	joined   chan struct{}
 	reported chan reportedResult
@@ -92,6 +94,16 @@ func (f *fakeControlPlane) PullTask(context.Context, *transport.PullTaskRequest)
 }
 
 func (f *fakeControlPlane) ReportResult(_ context.Context, req *transport.ReportResultRequest) (*transport.ReportResultResponse, error) {
+	f.mu.Lock()
+	fail := f.failAllReports
+	if f.failNextReport {
+		fail = true
+		f.failNextReport = false
+	}
+	f.mu.Unlock()
+	if fail {
+		return nil, status.Error(codes.Unavailable, "simulated report failure")
+	}
 	f.reported <- reportedResult{TaskID: req.TaskId, Output: req.Output, OK: req.Ok}
 	return &transport.ReportResultResponse{Accepted: true}, nil
 }
@@ -101,6 +113,24 @@ func (f *fakeControlPlane) ReportResult(_ context.Context, req *transport.Report
 func (f *fakeControlPlane) forceReconnect() {
 	f.mu.Lock()
 	f.failNextHeartbeat = true
+	f.mu.Unlock()
+}
+
+// forceReportFailureOnce tells the fake to fail exactly the next
+// ReportResult call, simulating a transient control-plane blip that the
+// agent's task-runner loop must retry through rather than exit on.
+func (f *fakeControlPlane) forceReportFailureOnce() {
+	f.mu.Lock()
+	f.failNextReport = true
+	f.mu.Unlock()
+}
+
+// forceReportFailureAlways tells the fake to fail every ReportResult call
+// from now on, so a test can exercise a retry loop that never resolves on
+// its own and must instead be stopped by ctx cancellation.
+func (f *fakeControlPlane) forceReportFailureAlways() {
+	f.mu.Lock()
+	f.failAllReports = true
 	f.mu.Unlock()
 }
 
@@ -268,5 +298,114 @@ func TestAgentReconnectsWithoutReEnrolling(t *testing.T) {
 	cancel()
 	if err := <-runErr; err != nil {
 		t.Fatalf("Run() = %v, want nil after ctx cancellation", err)
+	}
+}
+
+// TestAgentRecoversFromTransientReportFailure fails the very first
+// ReportResult call the fake control plane sees, then lets every call after
+// that succeed. Before this fix, execReport propagated that failure as a Go
+// error and runRunner (and therefore the whole agent) exited. This confirms
+// the task-runner loop instead retries through the blip: Run keeps running
+// and the task is eventually reported successfully.
+func TestAgentRecoversFromTransientReportFailure(t *testing.T) {
+	catPath := requireCatOnPath(t)
+	fake, dial := startFakeControlPlane(t)
+	fake.forceReportFailureOnce()
+
+	a := New(Config{
+		AgentID:           "agent-1",
+		Region:            "r1",
+		Caps:              1,
+		Targets:           []string{"bufnet"},
+		Dialer:            dial,
+		Jitter:            func() float64 { return 0 },
+		HeartbeatInterval: 20 * time.Millisecond,
+		PullInterval:      10 * time.Millisecond,
+		Process:           ProcessSpec{Argv: []string{catPath}},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- a.Run(ctx) }()
+
+	select {
+	case <-fake.joined:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the agent to join")
+	}
+
+	var result reportedResult
+	select {
+	case result = <-fake.reported:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the agent to report a result after a transient ReportResult failure")
+	}
+
+	if result.TaskID != "t1" {
+		t.Fatalf("reported TaskID = %q, want %q", result.TaskID, "t1")
+	}
+	if !result.OK {
+		t.Fatalf("reported OK = false, want true")
+	}
+
+	// The failure must not have killed the agent: Run has not returned.
+	select {
+	case err := <-runErr:
+		t.Fatalf("Run() returned early (%v) after a transient RPC failure; want it still running", err)
+	default:
+	}
+
+	cancel()
+	if err := <-runErr; err != nil {
+		t.Fatalf("Run() = %v, want nil after ctx cancellation", err)
+	}
+}
+
+// TestAgentCtxCancelDuringReportRetryReturnsCleanly makes every ReportResult
+// call fail, so the task-runner loop's retry never resolves on its own, then
+// cancels ctx while it is stuck retrying. A real cancellation must still stop
+// the agent promptly — the retry loop must not swallow it and keep looping.
+func TestAgentCtxCancelDuringReportRetryReturnsCleanly(t *testing.T) {
+	catPath := requireCatOnPath(t)
+	fake, dial := startFakeControlPlane(t)
+	fake.forceReportFailureAlways()
+
+	a := New(Config{
+		AgentID:           "agent-1",
+		Region:            "r1",
+		Caps:              1,
+		Targets:           []string{"bufnet"},
+		Dialer:            dial,
+		Jitter:            func() float64 { return 0 },
+		HeartbeatInterval: 20 * time.Millisecond,
+		PullInterval:      10 * time.Millisecond,
+		Process:           ProcessSpec{Argv: []string{catPath}},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- a.Run(ctx) }()
+
+	select {
+	case <-fake.joined:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the agent to join")
+	}
+
+	// Give the runner time to pull, execute, and settle into its
+	// ever-failing ReportResult retry loop before cancelling.
+	time.Sleep(100 * time.Millisecond)
+
+	cancel()
+	select {
+	case err := <-runErr:
+		if err != nil {
+			t.Fatalf("Run() = %v, want nil after ctx cancellation while a report was being retried", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run() did not return promptly after ctx cancellation while a report was mid-retry")
 	}
 }
