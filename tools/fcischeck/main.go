@@ -48,6 +48,38 @@ var bannedCalls = map[string]map[string]string{
 	},
 }
 
+// coreImportViolation enforces the positive allow-list for a core's
+// cross-package imports: a core may reach ONLY the standard library,
+// internal/model (shared data), and sibling internal/core packages. Any other
+// module-internal package (notably internal/shell) or any third-party module is
+// rejected. This is the guardrail that keeps "core may call core" from widening
+// into "core may import anything" — a new impure dependency is caught by
+// omission, not by having to remember to add it to a block-list.
+func coreImportViolation(path string) (string, bool) {
+	const modulePrefix = "github.com/msivraj/swarm/"
+	const modelPkg = modulePrefix + "internal/model"
+	const corePkg = modulePrefix + "internal/core/"
+	if strings.HasPrefix(path, modulePrefix) {
+		if path == modelPkg || strings.HasPrefix(path, modelPkg+"/") || strings.HasPrefix(path, corePkg) {
+			return "", false // core -> model or core -> core: allowed
+		}
+		if strings.HasPrefix(path, modulePrefix+"internal/shell") {
+			return "core must never import shell (the dependency points the other way)", true
+		}
+		return "core may import only internal/model and sibling internal/core packages", true
+	}
+	// A third-party module's first path segment carries a domain (has a dot);
+	// standard-library paths never do (fmt, sort, encoding/json, ...).
+	first := path
+	if i := strings.IndexByte(path, '/'); i >= 0 {
+		first = path[:i]
+	}
+	if strings.Contains(first, ".") {
+		return "core is pure — no third-party imports; keep cores on stdlib + internal/model + internal/core", true
+	}
+	return "", false // standard library — handled by bannedImports/bannedCalls
+}
+
 func main() {
 	roots := os.Args[1:]
 	if len(roots) == 0 {
@@ -99,6 +131,11 @@ func checkFile(fset *token.FileSet, f *ast.File) int {
 			continue
 		}
 		aliases[name] = path
+		if msg, bad := coreImportViolation(path); bad {
+			fmt.Fprintf(os.Stderr, "%s: fcis: import %q — %s\n", fset.Position(imp.Pos()), path, msg)
+			n++
+			continue
+		}
 		if msg, bad := bannedImports[path]; bad {
 			fmt.Fprintf(os.Stderr, "%s: fcis: import %q — %s\n", fset.Position(imp.Pos()), path, msg)
 			n++

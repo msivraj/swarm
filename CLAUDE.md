@@ -19,6 +19,13 @@ signatures and the properties to test.
   core → execute the returned commands.
 - **Dependency direction:** shell may import core; **core may never import
   shell** (or `net`, `os`, `database/sql`, gRPC, NATS, …).
+- **Core import allow-list:** a core may import **only** the standard
+  library, `internal/model` (shared data), and sibling `internal/core/*`
+  packages — nothing else. **Core may call core** (e.g. `admission →
+  templates`, `routing → registry`): pure-on-pure reuse, kept acyclic by the
+  Go compiler and pure by the rules above. That is the *only* cross-package
+  freedom — no third-party modules, no shell — and fcischeck enforces it as
+  an allow-list, so nothing new slips in by omission.
 
 `internal/core/mitosis` is the reference: read it before writing any core.
 
@@ -45,7 +52,9 @@ A PR merges only when all of these are green:
 1. `go build` · `go vet`
 2. `gofmt` clean · `golangci-lint`
 3. **fcischeck** — no I/O import, no `time.Now`/`Since`/`Until`, no
-   `math/rand`/`crypto/rand`, no dot-imports inside `internal/core`
+   `math/rand`/`crypto/rand`, no dot-imports, and the **core import
+   allow-list** (stdlib + `internal/model` + sibling `internal/core` only)
+   inside `internal/core`
 4. `go test -race ./...`
 5. **core coverage ≥ 90%** (cores are pure — no excuse)
 6. the auditor's required **`audit/semantic`** status check
