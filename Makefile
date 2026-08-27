@@ -35,3 +35,7 @@ gate-full: build fmt-check vet lint fcis test cover
 
 tidy:
 	$(GO) mod tidy
+
+# Regenerate gRPC/proto Go from proto/*.proto (requires buf + plugins on PATH).
+proto:
+	@PATH="$$PATH:$$($(GO) env GOPATH)/bin" buf generate

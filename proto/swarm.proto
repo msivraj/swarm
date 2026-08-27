@@ -1,0 +1,49 @@
+syntax = "proto3";
+package swarm.v1;
+option go_package = "github.com/msivraj/swarm/internal/shell/transport;transport";
+
+enum Coupling {
+  COUPLING_INDEPENDENT = 0;
+  COUPLING_BARRIER = 1;
+  COUPLING_LEADER = 2;
+  COUPLING_MESSAGE_PASSING = 3;
+}
+
+message SubmitJobRequest {
+  string template = 1;
+  Coupling coupling = 2;
+  map<string, string> params = 3;
+}
+message SubmitJobResponse { string job_id = 1; }
+
+message JoinAgentRequest { string agent = 1; string region = 2; int32 caps = 3; }
+message JoinAgentResponse { string cell_id = 1; bool accepted = 2; string reason = 3; }
+
+message HeartbeatRequest { string agent = 1; }
+message HeartbeatResponse { bool ok = 1; }
+
+message Task { string id = 1; string job_id = 2; bytes input = 3; int32 attempt = 4; }
+message PullTaskRequest { string agent = 1; }
+message PullTaskResponse { bool has_task = 1; Task task = 2; }
+
+message ReportResultRequest { string task_id = 1; bytes output = 2; bool ok = 3; }
+message ReportResultResponse { bool accepted = 1; }
+
+message PsRequest {}
+message PsResponse { int32 cells = 1; int32 machines = 2; int32 jobs = 3; }
+
+message JobStatusRequest { string job_id = 1; }
+message JobStatusResponse { bool done = 1; bytes aggregate = 2; }
+
+// ControlPlane is the P0 control-plane surface: submit jobs, join agents,
+// heartbeat, pull/report tasks, and query status. Single region, central
+// membership (no gossip in P0).
+service ControlPlane {
+  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+  rpc JoinAgent(JoinAgentRequest) returns (JoinAgentResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc PullTask(PullTaskRequest) returns (PullTaskResponse);
+  rpc ReportResult(ReportResultRequest) returns (ReportResultResponse);
+  rpc Ps(PsRequest) returns (PsResponse);
+  rpc JobStatus(JobStatusRequest) returns (JobStatusResponse);
+}
