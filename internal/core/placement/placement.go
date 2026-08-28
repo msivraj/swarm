@@ -79,3 +79,50 @@ func PlaceAcross(t model.Task, local []model.CellView, peers []model.RegionView)
 	}
 	return Placement{Kind: NoCapacity}
 }
+
+// Satisfies reports whether an offered CapSet covers every capability in a
+// required CapSet — required ⊆ offered. A nil or empty required CapSet is
+// always satisfied, regardless of offered (including a nil/empty offered).
+//
+// CapSet's documented contract (issue #58) is that callers pass it sorted
+// and de-duplicated, but Satisfies does not trust that contract on its
+// input: order and duplicates in either offered or required must not affect
+// the result, so this builds a local set (map) from offered and checks each
+// tag in required against it. That keeps the result correct — and
+// independent of slice order or duplicates — regardless of whether a caller
+// upheld the contract, at the cost of an O(n) allocation per call;
+// placement-time cardinalities (a handful of capability tags per cell) make
+// that cost irrelevant.
+func Satisfies(offered, required model.CapSet) bool {
+	if len(required) == 0 {
+		return true
+	}
+	have := make(map[string]struct{}, len(offered))
+	for _, tag := range offered {
+		have[tag] = struct{}{}
+	}
+	for _, tag := range required {
+		if _, ok := have[tag]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// PlaceCapable is Place restricted to cells whose Caps satisfy t.Requires.
+// It resolves the ambiguity the ticket leaves open by pre-filtering cells on
+// Satisfies(c.Caps, t.Requires) and then delegating to Place unchanged: this
+// keeps the first-fit tie-break identical to Place's own (decide on slice
+// order of the filtered cells, not on cell identity or load), and — since
+// Satisfies always returns true for an empty/nil t.Requires — makes
+// PlaceCapable behave byte-identically to Place for every capless task, the
+// regression the ticket requires, without duplicating Place's scan logic.
+func PlaceCapable(t model.Task, cells []model.CellView) Placement {
+	capable := make([]model.CellView, 0, len(cells))
+	for _, c := range cells {
+		if Satisfies(c.Caps, t.Requires) {
+			capable = append(capable, c)
+		}
+	}
+	return Place(t, capable)
+}
