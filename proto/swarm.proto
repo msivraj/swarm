@@ -9,6 +9,14 @@ enum Coupling {
   COUPLING_MESSAGE_PASSING = 3;
 }
 
+// Health mirrors model.Health ordinals verbatim (Healthy=0, Degraded=1,
+// Unreachable=2).
+enum Health {
+  HEALTH_HEALTHY = 0;
+  HEALTH_DEGRADED = 1;
+  HEALTH_UNREACHABLE = 2;
+}
+
 message SubmitJobRequest {
   string template = 1;
   Coupling coupling = 2;
@@ -35,6 +43,72 @@ message PsResponse { int32 cells = 1; int32 machines = 2; int32 jobs = 3; }
 message JobStatusRequest { string job_id = 1; }
 message JobStatusResponse { bool done = 1; bytes aggregate = 2; }
 
+// ---- P1 cross-region surface (additive; all P0 messages above unchanged) ----
+
+// JobSpec is a job's decomposable spec, carried on cross-region dispatch so a
+// region that did not admit the job can still route/aggregate its tasks.
+message JobSpec {
+  string id = 1;
+  string template = 2;
+  Coupling coupling = 3;
+  map<string, string> params = 4;
+}
+
+// RegionalSummary is what a region publishes upward (mirrors
+// routing.RegionalSummary); `at` is the shell-stamped Instant (int64 ns). A
+// periodic PublishSummary IS the region heartbeat — a region that stops
+// publishing goes stale and is downgraded via routing.Diverged.
+message RegionalSummary {
+  string region = 1;
+  int32 free = 2;
+  int32 cells = 3;
+  Health health = 4;
+  int64 at = 5;
+}
+
+// RegionView is one region as the global layer sees it (mirrors model.RegionView).
+message RegionView {
+  string id = 1;
+  int32 free = 2;
+  int32 cells = 3;
+  Health health = 4;
+}
+
+message PublishSummaryRequest { RegionalSummary summary = 1; }
+message PublishSummaryResponse { bool ok = 1; }
+
+message GlobalViewRequest {}
+message GlobalViewResponse {
+  repeated RegionView regions = 1; // merged, health as of the reply
+  repeated string diverged = 2; // RegionIDs routing.Diverged flagged stale
+}
+
+// DispatchTasksRequest carries global->region (spread) and region->region
+// (spill) task delivery. `result_sink` is the dial address that owns roll-up
+// for this job: spread -> the global layer (region reports a PARTIAL via
+// ReportPartial); spill -> the ORIGIN region (peer reports the raw result via
+// the P0 ControlPlane.ReportResult); empty/self -> aggregate locally.
+message DispatchTasksRequest {
+  JobSpec job = 1;
+  repeated Task tasks = 2;
+  string result_sink = 3;
+}
+message DispatchTasksResponse { bool accepted = 1; string reason = 2; }
+
+// PartialAggregate is a job-level partial reported up the roll-up tree
+// (region -> global). `template` is carried because model.Aggregate has no
+// template tag and `value` is opaque template-encoded bytes — the receiver
+// needs it to call aggregate.Merge. `done` marks the sender's subtree complete.
+message PartialAggregate {
+  string job_id = 1;
+  string region = 2; // reporting region (dedup / expected-set tracking)
+  string template = 3;
+  bytes value = 4; // model.Aggregate.Value
+  bool done = 5;
+}
+message ReportPartialRequest { PartialAggregate partial = 1; }
+message ReportPartialResponse { bool ok = 1; }
+
 // ControlPlane is the P0 control-plane surface: submit jobs, join agents,
 // heartbeat, pull/report tasks, and query status. Single region, central
 // membership (no gossip in P0).
@@ -45,5 +119,20 @@ service ControlPlane {
   rpc PullTask(PullTaskRequest) returns (PullTaskResponse);
   rpc ReportResult(ReportResultRequest) returns (ReportResultResponse);
   rpc Ps(PsRequest) returns (PsResponse);
+  rpc JobStatus(JobStatusRequest) returns (JobStatusResponse);
+  // Cross-region task delivery: global->region (spread) and region->region (spill).
+  rpc DispatchTasks(DispatchTasksRequest) returns (DispatchTasksResponse);
+}
+
+// GlobalRouter is the P1 global routing layer (S3): it holds the merged
+// GlobalView (routing.MergeGlobal), routes jobs (routing.Route), fans spread
+// jobs across regions, and is the roll-up sink for their region partials.
+service GlobalRouter {
+  rpc Submit(SubmitJobRequest) returns (SubmitJobResponse);
+  rpc PublishSummary(PublishSummaryRequest) returns (PublishSummaryResponse);
+  rpc GetGlobalView(GlobalViewRequest) returns (GlobalViewResponse);
+  // Roll-up sink for Spread jobs: each participating region reports its region
+  // PARTIAL here; the global layer combines them with aggregate.Merge.
+  rpc ReportPartial(ReportPartialRequest) returns (ReportPartialResponse);
   rpc JobStatus(JobStatusRequest) returns (JobStatusResponse);
 }

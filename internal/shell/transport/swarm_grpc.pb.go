@@ -19,13 +19,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ControlPlane_SubmitJob_FullMethodName    = "/swarm.v1.ControlPlane/SubmitJob"
-	ControlPlane_JoinAgent_FullMethodName    = "/swarm.v1.ControlPlane/JoinAgent"
-	ControlPlane_Heartbeat_FullMethodName    = "/swarm.v1.ControlPlane/Heartbeat"
-	ControlPlane_PullTask_FullMethodName     = "/swarm.v1.ControlPlane/PullTask"
-	ControlPlane_ReportResult_FullMethodName = "/swarm.v1.ControlPlane/ReportResult"
-	ControlPlane_Ps_FullMethodName           = "/swarm.v1.ControlPlane/Ps"
-	ControlPlane_JobStatus_FullMethodName    = "/swarm.v1.ControlPlane/JobStatus"
+	ControlPlane_SubmitJob_FullMethodName     = "/swarm.v1.ControlPlane/SubmitJob"
+	ControlPlane_JoinAgent_FullMethodName     = "/swarm.v1.ControlPlane/JoinAgent"
+	ControlPlane_Heartbeat_FullMethodName     = "/swarm.v1.ControlPlane/Heartbeat"
+	ControlPlane_PullTask_FullMethodName      = "/swarm.v1.ControlPlane/PullTask"
+	ControlPlane_ReportResult_FullMethodName  = "/swarm.v1.ControlPlane/ReportResult"
+	ControlPlane_Ps_FullMethodName            = "/swarm.v1.ControlPlane/Ps"
+	ControlPlane_JobStatus_FullMethodName     = "/swarm.v1.ControlPlane/JobStatus"
+	ControlPlane_DispatchTasks_FullMethodName = "/swarm.v1.ControlPlane/DispatchTasks"
 )
 
 // ControlPlaneClient is the client API for ControlPlane service.
@@ -43,6 +44,8 @@ type ControlPlaneClient interface {
 	ReportResult(ctx context.Context, in *ReportResultRequest, opts ...grpc.CallOption) (*ReportResultResponse, error)
 	Ps(ctx context.Context, in *PsRequest, opts ...grpc.CallOption) (*PsResponse, error)
 	JobStatus(ctx context.Context, in *JobStatusRequest, opts ...grpc.CallOption) (*JobStatusResponse, error)
+	// Cross-region task delivery: global->region (spread) and region->region (spill).
+	DispatchTasks(ctx context.Context, in *DispatchTasksRequest, opts ...grpc.CallOption) (*DispatchTasksResponse, error)
 }
 
 type controlPlaneClient struct {
@@ -123,6 +126,16 @@ func (c *controlPlaneClient) JobStatus(ctx context.Context, in *JobStatusRequest
 	return out, nil
 }
 
+func (c *controlPlaneClient) DispatchTasks(ctx context.Context, in *DispatchTasksRequest, opts ...grpc.CallOption) (*DispatchTasksResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DispatchTasksResponse)
+	err := c.cc.Invoke(ctx, ControlPlane_DispatchTasks_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ControlPlaneServer is the server API for ControlPlane service.
 // All implementations must embed UnimplementedControlPlaneServer
 // for forward compatibility.
@@ -138,6 +151,8 @@ type ControlPlaneServer interface {
 	ReportResult(context.Context, *ReportResultRequest) (*ReportResultResponse, error)
 	Ps(context.Context, *PsRequest) (*PsResponse, error)
 	JobStatus(context.Context, *JobStatusRequest) (*JobStatusResponse, error)
+	// Cross-region task delivery: global->region (spread) and region->region (spill).
+	DispatchTasks(context.Context, *DispatchTasksRequest) (*DispatchTasksResponse, error)
 	mustEmbedUnimplementedControlPlaneServer()
 }
 
@@ -168,6 +183,9 @@ func (UnimplementedControlPlaneServer) Ps(context.Context, *PsRequest) (*PsRespo
 }
 func (UnimplementedControlPlaneServer) JobStatus(context.Context, *JobStatusRequest) (*JobStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method JobStatus not implemented")
+}
+func (UnimplementedControlPlaneServer) DispatchTasks(context.Context, *DispatchTasksRequest) (*DispatchTasksResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DispatchTasks not implemented")
 }
 func (UnimplementedControlPlaneServer) mustEmbedUnimplementedControlPlaneServer() {}
 func (UnimplementedControlPlaneServer) testEmbeddedByValue()                      {}
@@ -316,6 +334,24 @@ func _ControlPlane_JobStatus_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlPlane_DispatchTasks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DispatchTasksRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServer).DispatchTasks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlane_DispatchTasks_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServer).DispatchTasks(ctx, req.(*DispatchTasksRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ControlPlane_ServiceDesc is the grpc.ServiceDesc for ControlPlane service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -350,6 +386,276 @@ var ControlPlane_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "JobStatus",
 			Handler:    _ControlPlane_JobStatus_Handler,
+		},
+		{
+			MethodName: "DispatchTasks",
+			Handler:    _ControlPlane_DispatchTasks_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "swarm.proto",
+}
+
+const (
+	GlobalRouter_Submit_FullMethodName         = "/swarm.v1.GlobalRouter/Submit"
+	GlobalRouter_PublishSummary_FullMethodName = "/swarm.v1.GlobalRouter/PublishSummary"
+	GlobalRouter_GetGlobalView_FullMethodName  = "/swarm.v1.GlobalRouter/GetGlobalView"
+	GlobalRouter_ReportPartial_FullMethodName  = "/swarm.v1.GlobalRouter/ReportPartial"
+	GlobalRouter_JobStatus_FullMethodName      = "/swarm.v1.GlobalRouter/JobStatus"
+)
+
+// GlobalRouterClient is the client API for GlobalRouter service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// GlobalRouter is the P1 global routing layer (S3): it holds the merged
+// GlobalView (routing.MergeGlobal), routes jobs (routing.Route), fans spread
+// jobs across regions, and is the roll-up sink for their region partials.
+type GlobalRouterClient interface {
+	Submit(ctx context.Context, in *SubmitJobRequest, opts ...grpc.CallOption) (*SubmitJobResponse, error)
+	PublishSummary(ctx context.Context, in *PublishSummaryRequest, opts ...grpc.CallOption) (*PublishSummaryResponse, error)
+	GetGlobalView(ctx context.Context, in *GlobalViewRequest, opts ...grpc.CallOption) (*GlobalViewResponse, error)
+	// Roll-up sink for Spread jobs: each participating region reports its region
+	// PARTIAL here; the global layer combines them with aggregate.Merge.
+	ReportPartial(ctx context.Context, in *ReportPartialRequest, opts ...grpc.CallOption) (*ReportPartialResponse, error)
+	JobStatus(ctx context.Context, in *JobStatusRequest, opts ...grpc.CallOption) (*JobStatusResponse, error)
+}
+
+type globalRouterClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewGlobalRouterClient(cc grpc.ClientConnInterface) GlobalRouterClient {
+	return &globalRouterClient{cc}
+}
+
+func (c *globalRouterClient) Submit(ctx context.Context, in *SubmitJobRequest, opts ...grpc.CallOption) (*SubmitJobResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SubmitJobResponse)
+	err := c.cc.Invoke(ctx, GlobalRouter_Submit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *globalRouterClient) PublishSummary(ctx context.Context, in *PublishSummaryRequest, opts ...grpc.CallOption) (*PublishSummaryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PublishSummaryResponse)
+	err := c.cc.Invoke(ctx, GlobalRouter_PublishSummary_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *globalRouterClient) GetGlobalView(ctx context.Context, in *GlobalViewRequest, opts ...grpc.CallOption) (*GlobalViewResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GlobalViewResponse)
+	err := c.cc.Invoke(ctx, GlobalRouter_GetGlobalView_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *globalRouterClient) ReportPartial(ctx context.Context, in *ReportPartialRequest, opts ...grpc.CallOption) (*ReportPartialResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReportPartialResponse)
+	err := c.cc.Invoke(ctx, GlobalRouter_ReportPartial_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *globalRouterClient) JobStatus(ctx context.Context, in *JobStatusRequest, opts ...grpc.CallOption) (*JobStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JobStatusResponse)
+	err := c.cc.Invoke(ctx, GlobalRouter_JobStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GlobalRouterServer is the server API for GlobalRouter service.
+// All implementations must embed UnimplementedGlobalRouterServer
+// for forward compatibility.
+//
+// GlobalRouter is the P1 global routing layer (S3): it holds the merged
+// GlobalView (routing.MergeGlobal), routes jobs (routing.Route), fans spread
+// jobs across regions, and is the roll-up sink for their region partials.
+type GlobalRouterServer interface {
+	Submit(context.Context, *SubmitJobRequest) (*SubmitJobResponse, error)
+	PublishSummary(context.Context, *PublishSummaryRequest) (*PublishSummaryResponse, error)
+	GetGlobalView(context.Context, *GlobalViewRequest) (*GlobalViewResponse, error)
+	// Roll-up sink for Spread jobs: each participating region reports its region
+	// PARTIAL here; the global layer combines them with aggregate.Merge.
+	ReportPartial(context.Context, *ReportPartialRequest) (*ReportPartialResponse, error)
+	JobStatus(context.Context, *JobStatusRequest) (*JobStatusResponse, error)
+	mustEmbedUnimplementedGlobalRouterServer()
+}
+
+// UnimplementedGlobalRouterServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedGlobalRouterServer struct{}
+
+func (UnimplementedGlobalRouterServer) Submit(context.Context, *SubmitJobRequest) (*SubmitJobResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Submit not implemented")
+}
+func (UnimplementedGlobalRouterServer) PublishSummary(context.Context, *PublishSummaryRequest) (*PublishSummaryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PublishSummary not implemented")
+}
+func (UnimplementedGlobalRouterServer) GetGlobalView(context.Context, *GlobalViewRequest) (*GlobalViewResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetGlobalView not implemented")
+}
+func (UnimplementedGlobalRouterServer) ReportPartial(context.Context, *ReportPartialRequest) (*ReportPartialResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportPartial not implemented")
+}
+func (UnimplementedGlobalRouterServer) JobStatus(context.Context, *JobStatusRequest) (*JobStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method JobStatus not implemented")
+}
+func (UnimplementedGlobalRouterServer) mustEmbedUnimplementedGlobalRouterServer() {}
+func (UnimplementedGlobalRouterServer) testEmbeddedByValue()                      {}
+
+// UnsafeGlobalRouterServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to GlobalRouterServer will
+// result in compilation errors.
+type UnsafeGlobalRouterServer interface {
+	mustEmbedUnimplementedGlobalRouterServer()
+}
+
+func RegisterGlobalRouterServer(s grpc.ServiceRegistrar, srv GlobalRouterServer) {
+	// If the following call panics, it indicates UnimplementedGlobalRouterServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&GlobalRouter_ServiceDesc, srv)
+}
+
+func _GlobalRouter_Submit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitJobRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GlobalRouterServer).Submit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GlobalRouter_Submit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GlobalRouterServer).Submit(ctx, req.(*SubmitJobRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GlobalRouter_PublishSummary_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PublishSummaryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GlobalRouterServer).PublishSummary(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GlobalRouter_PublishSummary_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GlobalRouterServer).PublishSummary(ctx, req.(*PublishSummaryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GlobalRouter_GetGlobalView_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GlobalViewRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GlobalRouterServer).GetGlobalView(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GlobalRouter_GetGlobalView_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GlobalRouterServer).GetGlobalView(ctx, req.(*GlobalViewRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GlobalRouter_ReportPartial_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportPartialRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GlobalRouterServer).ReportPartial(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GlobalRouter_ReportPartial_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GlobalRouterServer).ReportPartial(ctx, req.(*ReportPartialRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GlobalRouter_JobStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(JobStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GlobalRouterServer).JobStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GlobalRouter_JobStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GlobalRouterServer).JobStatus(ctx, req.(*JobStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// GlobalRouter_ServiceDesc is the grpc.ServiceDesc for GlobalRouter service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var GlobalRouter_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "swarm.v1.GlobalRouter",
+	HandlerType: (*GlobalRouterServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Submit",
+			Handler:    _GlobalRouter_Submit_Handler,
+		},
+		{
+			MethodName: "PublishSummary",
+			Handler:    _GlobalRouter_PublishSummary_Handler,
+		},
+		{
+			MethodName: "GetGlobalView",
+			Handler:    _GlobalRouter_GetGlobalView_Handler,
+		},
+		{
+			MethodName: "ReportPartial",
+			Handler:    _GlobalRouter_ReportPartial_Handler,
+		},
+		{
+			MethodName: "JobStatus",
+			Handler:    _GlobalRouter_JobStatus_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
