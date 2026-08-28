@@ -17,6 +17,7 @@ import (
 	"github.com/msivraj/swarm/internal/model"
 	"github.com/msivraj/swarm/internal/shell/agent"
 	"github.com/msivraj/swarm/internal/shell/controlplane"
+	"github.com/msivraj/swarm/internal/shell/global"
 	"github.com/msivraj/swarm/internal/shell/store"
 )
 
@@ -31,6 +32,9 @@ func main() {
 			return
 		case "control-plane":
 			runControlPlane(os.Args[2:])
+			return
+		case "global":
+			runGlobal(os.Args[2:])
 			return
 		}
 	}
@@ -165,6 +169,67 @@ func runControlPlane(args []string) {
 	if err := srv.Serve(lis); err != nil {
 		log.Fatalf("control-plane: serve: %v", err)
 	}
+}
+
+// runGlobal starts the P1 global routing layer's gRPC server (S3, issue
+// #45): an in-memory store, a real wall clock fed into global.Server as the
+// now data dependency (never read inside a core), and global.DefaultConfig's
+// tunables, extended by the --region-targets/--advertise-addr/
+// --diverge-sweep flags. --region-targets is required — with no known
+// regions to dial, every Submit would immediately reject ResourceExhausted.
+func runGlobal(args []string) {
+	fs := flag.NewFlagSet("global", flag.ExitOnError)
+	listen := fs.String("listen", ":7080", "address for the global routing layer's gRPC server to listen on")
+	regionTargets := fs.String("region-targets", "", "comma-separated region=host:port pairs mapping a RegionID to its control-plane dial address")
+	advertiseAddr := fs.String("advertise-addr", "", "dial address regions use to reach this global layer (result_sink for a Spread partition, matched against each region's own --global-router); defaults to --listen")
+	divergeSweep := fs.Duration("diverge-sweep", 0, "how often to recompute diverged (stale) regions; 0 uses global.DefaultConfig's default")
+	if err := fs.Parse(args); err != nil {
+		log.Fatalf("global: %v", err)
+	}
+
+	lis, err := net.Listen("tcp", *listen)
+	if err != nil {
+		log.Fatalf("global: listen on %s: %v", *listen, err)
+	}
+
+	cfg := global.DefaultConfig()
+	cfg.RegionTargets, err = parseRegionTargets(*regionTargets)
+	if err != nil {
+		log.Fatalf("global: %v", err)
+	}
+	cfg.SelfAddress = *advertiseAddr
+	if cfg.SelfAddress == "" {
+		cfg.SelfAddress = *listen
+	}
+	if *divergeSweep > 0 {
+		cfg.DivergeSweep = *divergeSweep
+	}
+
+	srv := global.New(store.NewMemStore(), cfg, now)
+	log.Printf("global: listening on %s", *listen)
+	if err := srv.Serve(lis); err != nil {
+		log.Fatalf("global: serve: %v", err)
+	}
+}
+
+// parseRegionTargets parses --region-targets' "region=host:port,..." form
+// into global.Config.RegionTargets, mirroring parsePeerTargets/
+// configureFailover's identical parsing for controlplane/agent — kept
+// separate rather than shared since each builds a different Config's map and
+// the three flag sets evolve independently.
+func parseRegionTargets(s string) (map[model.RegionID]string, error) {
+	targets := map[model.RegionID]string{}
+	if s == "" {
+		return targets, nil
+	}
+	for _, pair := range strings.Split(s, ",") {
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok {
+			return nil, fmt.Errorf("--region-targets: invalid pair %q, want region=host:port", pair)
+		}
+		targets[model.RegionID(k)] = v
+	}
+	return targets, nil
 }
 
 // parsePeerTargets parses --peer-targets' "region=host:port,region=host:port"

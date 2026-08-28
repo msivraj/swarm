@@ -98,6 +98,32 @@ func route(job model.JobSpec, regions []model.RegionView) Route {
 	}
 }
 
+// Decide is route's exported entry point. It has exactly route's behavior —
+// it exists only so a cross-package call site (the global routing layer
+// shell, issue #45) has a symbol to call: route itself cannot be exported
+// under the name "Route" because the Route type already claims that
+// identifier in this package (see route's doc for the full explanation, and
+// issue #35's notes, which anticipated exporting it as "Route" without
+// accounting for that collision).
+func Decide(job model.JobSpec, regions []model.RegionView) Route {
+	return route(job, regions)
+}
+
+// Summaries returns v's summaries as a slice, sorted by RegionID so the
+// result is stable regardless of the underlying map's iteration order. This
+// is GlobalView's read side: the shell (issue #45) needs to project the
+// merged view into []model.RegionView for a routing decision and for the
+// GetGlobalView RPC response, and GlobalView's summaries field is
+// intentionally unexported (see GlobalView's doc) so this is its only way in.
+func Summaries(v GlobalView) []RegionalSummary {
+	out := make([]RegionalSummary, 0, len(v.summaries))
+	for _, s := range v.summaries {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Region < out[j].Region })
+	return out
+}
+
 // eligibleRegions filters regions to those route may send a job to.
 func eligibleRegions(regions []model.RegionView) []model.RegionView {
 	var out []model.RegionView
