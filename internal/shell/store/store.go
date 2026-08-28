@@ -1,15 +1,21 @@
-// Package store is a shell package: it holds the control plane's mutable P0
-// state — submitted jobs, the pending task pull queue, reported
+// Package store is a shell package: it holds the control plane's mutable
+// state — submitted jobs, one task pull queue per cell, reported
 // results/aggregates, and the current registry.Registry value. It performs
 // no decisions of its own; cores decide, and the store only persists what
-// the shell commits and serves reads back. In P0 the only implementation is
-// in-memory, but the Store interface leaves room for a durable backend
+// the shell commits and serves reads back. In P0/P1 the only implementation
+// is in-memory, but the Store interface leaves room for a durable backend
 // later without the control plane changing.
+//
+// P1 (issue #43) replaced P0's single FIFO queue shared across every cell
+// with one FIFO queue per cell: the control plane places each task on a
+// specific cell (via placement.Place) before it reaches the store, and an
+// agent's PullTask must only ever be served from its own cell's queue. See
+// EnqueueTask/DequeueTask/RequeueTask.
 //
 // Ambiguity resolved here (see issue #18): the proposed interface's
 // PutResult/ResultsForJob pair needs a TaskID -> JobID mapping to group
 // results by job, but model.TaskResult carries only a TaskID. The store
-// learns that mapping from EnqueueTasks/RequeueTask (model.Task carries
+// learns that mapping from EnqueueTask/RequeueTask (model.Task carries
 // both IDs) and PutResult looks it up; a result for a TaskID the store has
 // never seen enqueued returns ErrUnknownTask rather than being silently
 // dropped or misfiled.
@@ -53,18 +59,20 @@ type Store interface {
 	// GetJob returns the JobSpec stored under id, and whether it was found.
 	GetJob(id model.JobID) (model.JobSpec, bool, error)
 
-	// EnqueueTasks appends tasks to the back of the pending-task pull queue,
-	// in the order given. P0 tasks are Independent, so a single FIFO queue
-	// shared across jobs is sufficient.
-	EnqueueTasks(tasks []model.Task) error
-	// DequeueTask pops the task at the front of the queue. ok is false when
-	// the queue is empty; that is not an error.
-	DequeueTask() (model.Task, bool, error)
-	// RequeueTask puts t back on the queue for the shell to retry it (e.g.
-	// after a dispatch failure). It is appended to the back of the queue —
-	// behind whatever is already pending — so one failing task cannot starve
-	// the rest of the queue by being redelivered ahead of them.
-	RequeueTask(t model.Task) error
+	// EnqueueTask appends t to the back of cell's pull queue. Each cell has
+	// its own independent FIFO — a task enqueued on one cell is never visible
+	// to a DequeueTask call for another cell.
+	EnqueueTask(cell model.CellID, t model.Task) error
+	// DequeueTask pops the task at the front of cell's queue. ok is false
+	// when that cell's queue is empty (including when cell has never had a
+	// task enqueued on it); that is not an error.
+	DequeueTask(cell model.CellID) (model.Task, bool, error)
+	// RequeueTask puts t back on cell's queue for the shell to retry it
+	// (e.g. after a dispatch failure). It is appended to the back of that
+	// cell's queue — behind whatever is already pending — so one failing
+	// task cannot starve the rest of the cell's queue by being redelivered
+	// ahead of them.
+	RequeueTask(cell model.CellID, t model.Task) error
 
 	// PutResult records a reported TaskResult, accumulating it under its
 	// task's job. The store does not deduplicate by TaskID: a task retried
@@ -99,8 +107,8 @@ type memStore struct {
 	mu sync.Mutex
 
 	jobs       map[model.JobID]model.JobSpec
-	queue      []model.Task
-	taskJob    map[model.TaskID]model.JobID // learned from EnqueueTasks/RequeueTask
+	queues     map[model.CellID][]model.Task // one FIFO per cell
+	taskJob    map[model.TaskID]model.JobID  // learned from EnqueueTask/RequeueTask
 	results    map[model.JobID][]model.TaskResult
 	aggregates map[model.JobID]model.Aggregate
 	reg        registry.Registry
@@ -110,6 +118,7 @@ type memStore struct {
 func NewMemStore() Store {
 	return &memStore{
 		jobs:       make(map[model.JobID]model.JobSpec),
+		queues:     make(map[model.CellID][]model.Task),
 		taskJob:    make(map[model.TaskID]model.JobID),
 		results:    make(map[model.JobID][]model.TaskResult),
 		aggregates: make(map[model.JobID]model.Aggregate),
@@ -136,39 +145,36 @@ func (s *memStore) GetJob(id model.JobID) (model.JobSpec, bool, error) {
 	return spec, ok, nil
 }
 
-func (s *memStore) EnqueueTasks(tasks []model.Task) error {
-	for _, t := range tasks {
-		if t.ID == "" {
-			return ErrEmptyTaskID
-		}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.queue = append(s.queue, tasks...)
-	for _, t := range tasks {
-		s.taskJob[t.ID] = t.JobID
-	}
-	return nil
-}
-
-func (s *memStore) DequeueTask() (model.Task, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.queue) == 0 {
-		return model.Task{}, false, nil
-	}
-	t := s.queue[0]
-	s.queue = s.queue[1:]
-	return t, true, nil
-}
-
-func (s *memStore) RequeueTask(t model.Task) error {
+func (s *memStore) EnqueueTask(cell model.CellID, t model.Task) error {
 	if t.ID == "" {
 		return ErrEmptyTaskID
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.queue = append(s.queue, t)
+	s.queues[cell] = append(s.queues[cell], t)
+	s.taskJob[t.ID] = t.JobID
+	return nil
+}
+
+func (s *memStore) DequeueTask(cell model.CellID) (model.Task, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	q := s.queues[cell]
+	if len(q) == 0 {
+		return model.Task{}, false, nil
+	}
+	t := q[0]
+	s.queues[cell] = q[1:]
+	return t, true, nil
+}
+
+func (s *memStore) RequeueTask(cell model.CellID, t model.Task) error {
+	if t.ID == "" {
+		return ErrEmptyTaskID
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.queues[cell] = append(s.queues[cell], t)
 	s.taskJob[t.ID] = t.JobID
 	return nil
 }

@@ -20,6 +20,7 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/msivraj/swarm/internal/core/placement"
 	"github.com/msivraj/swarm/internal/core/registry"
 	"github.com/msivraj/swarm/internal/model"
 	"github.com/msivraj/swarm/internal/shell/store"
@@ -30,8 +31,10 @@ import (
 // mutable bookkeeping the shell needs that the store does not: per-agent
 // last-contact times, the agent<->cell membership this shell learned from
 // JoinAgent (the registry core folds events but does not expose per-cell
-// membership back out), mitosis cooldown stamps, and the task->job index
-// SubmitJob populates so ReportResult can tell when a job is complete.
+// membership back out), mitosis cooldown stamps, the task->job index
+// SubmitJob populates so ReportResult can tell when a job is complete, and
+// the ingress pending buffer for tasks placement.Place could not yet assign
+// to any cell.
 //
 // mu guards every mutable field below, including the registry mutations
 // (store.Registry/store.SetRegistry) driven by JoinAgent, the reaper, and
@@ -56,6 +59,7 @@ type Server struct {
 	taskJob       map[model.TaskID]model.JobID              // task -> owning job, learned at SubmitJob
 	taskTotal     map[model.JobID]int                       // job -> total tasks admitted for it
 	reportedTasks map[model.JobID]map[model.TaskID]struct{} // job -> distinct task IDs that have reported at least one result
+	pending       []model.Task                              // tasks placement.Place could not assign to any cell yet (region full); drained as capacity appears
 	nextCellID    int
 	nextJobID     int
 }
@@ -119,6 +123,59 @@ func (s *Server) applyRegistryEventLocked(ev registry.RegistryEvent) []registry.
 	// surfaced to the RPC caller, whose request already succeeded logically.
 	_ = s.store.SetRegistry(newReg)
 	return changes
+}
+
+// drainPendingLocked re-runs placement.Place over the pending buffer,
+// enqueuing (via store.EnqueueTask) every task that now fits a cell and
+// leaving the rest pending. It scans s.pending in its stable, FIFO arrival
+// order, so the result depends only on (pending order, registry state) —
+// never on map iteration order or wall-clock timing. Callers must hold s.mu.
+//
+// placement.Place's Free is agent capacity (registry.Snapshot derives it
+// from cell membership), not a task-slot count, and store.EnqueueTask never
+// touches the registry — so a single registry.Snapshot call reused
+// unmodified across every task in the buffer would let one cell with any
+// Free>0 silently absorb the entire buffer, defeating the point of one
+// queue per cell. To spread a batch across cells the way the ticket's
+// "per-cell task queues" replaces P0's single shared queue, this function
+// takes one registry.Snapshot and decrements its own working copy's Free by
+// one for the cell each successful Assign lands on, before placing the next
+// task — placement.Place itself is called unmodified and stays a pure,
+// P0-unchanged function; only the CellView data fed to it evolves within
+// this one drain pass, exactly as a shell is meant to orchestrate repeated
+// core calls. The real registry (and thus agent admission) is untouched.
+func (s *Server) drainPendingLocked() error {
+	if len(s.pending) == 0 {
+		return nil
+	}
+	working := registry.Snapshot(s.store.Registry())
+
+	remaining := make([]model.Task, 0, len(s.pending))
+	for _, t := range s.pending {
+		p := placement.Place(t, working)
+		if p.Kind != placement.Assign {
+			remaining = append(remaining, t)
+			continue
+		}
+		if err := s.store.EnqueueTask(p.Cell, t); err != nil {
+			return err
+		}
+		decrementFreeLocal(working, p.Cell)
+	}
+	s.pending = remaining
+	return nil
+}
+
+// decrementFreeLocal decrements cells' entry for id's Free count by one, in
+// place. It is a no-op if id is not present. See drainPendingLocked's doc
+// for why this local, in-memory adjustment exists.
+func decrementFreeLocal(cells []model.CellView, id model.CellID) {
+	for i := range cells {
+		if cells[i].ID == id {
+			cells[i].Free--
+			return
+		}
+	}
 }
 
 // newCellID returns a fresh, unique CellID. Callers must hold s.mu.

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"math"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -531,6 +532,428 @@ func TestMitosisSplitsOversizedCell(t *testing.T) {
 	srv.mu.Unlock()
 	if originalStillPresent {
 		t.Fatalf("original cell %s still tracked after split", original)
+	}
+}
+
+// twoCellConfig returns a fastConfig with a DefaultCellCapacity large enough
+// (2) that a solo agent joining a brand-new cell leaves that cell with
+// spare Free capacity for placement.Place to assign tasks to, rather than
+// immediately consuming the whole cell the way a capacity-1 cell would.
+func twoCellConfig() Config {
+	cfg := fastConfig()
+	cfg.DefaultCellCapacity = 2
+	return cfg
+}
+
+// joinAgent is a small SubmitJob/JoinAgent test helper: it joins agent with
+// the given Caps and fails the test if the join is rejected.
+func joinAgent(t *testing.T, ctx context.Context, client transport.ControlPlaneClient, agent string, caps int32) *transport.JoinAgentResponse {
+	t.Helper()
+	resp, err := client.JoinAgent(ctx, &transport.JoinAgentRequest{Agent: agent, Region: "us", Caps: caps})
+	if err != nil {
+		t.Fatalf("JoinAgent(%s): %v", agent, err)
+	}
+	if !resp.GetAccepted() {
+		t.Fatalf("JoinAgent(%s) rejected: %s", agent, resp.GetReason())
+	}
+	return resp
+}
+
+// submitMonteCarlo submits a monte-carlo job decomposing into exactly
+// `blocks` independent tasks (Trials == blocks, BlockSize == 1) and returns
+// its job id.
+func submitMonteCarlo(t *testing.T, ctx context.Context, client transport.ControlPlaneClient, blocks int) string {
+	t.Helper()
+	resp, err := client.SubmitJob(ctx, &transport.SubmitJobRequest{
+		Template: "monte-carlo",
+		Coupling: transport.Coupling_COUPLING_INDEPENDENT,
+		Params: map[string]string{
+			"trials":    strconv.Itoa(blocks),
+			"blockSize": "1",
+			"seed":      "7",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SubmitJob: %v", err)
+	}
+	return resp.GetJobId()
+}
+
+// drainAllTasks repeatedly calls PullTask(agent) until HasTask is false and
+// returns every task pulled, in pull order.
+func drainAllTasks(t *testing.T, ctx context.Context, client transport.ControlPlaneClient, agent string) []*transport.Task {
+	t.Helper()
+	var out []*transport.Task
+	for {
+		resp, err := client.PullTask(ctx, &transport.PullTaskRequest{Agent: agent})
+		if err != nil {
+			t.Fatalf("PullTask(%s): %v", agent, err)
+		}
+		if !resp.GetHasTask() {
+			return out
+		}
+		out = append(out, resp.GetTask())
+	}
+}
+
+// TestPerCellQueuesIsolateTasksByCell is the ticket's core acceptance
+// criterion: two cells A and B, each with a joined agent, share one job's
+// tasks between them (placement.Place spreads a batch across cells as each
+// cell's local capacity is consumed — see Server.drainPendingLocked), and
+// each agent's PullTask must only ever surface the tasks placed on its own
+// cell, never the other cell's.
+func TestPerCellQueuesIsolateTasksByCell(t *testing.T) {
+	clock := &testClock{}
+	client, srv, teardown := newTestServer(t, twoCellConfig(), clock)
+	defer teardown()
+	ctx := context.Background()
+
+	// agent-a (Caps 1) becomes the sole member of a fresh cell with spare
+	// Free (capacity 2, size 1). agent-b requests Caps 2, which that cell's
+	// remaining Free (1) cannot satisfy, so rendezvous routes it to a second,
+	// brand-new cell instead — two distinct cells, each with one agent and
+	// spare capacity for a task.
+	joinA := joinAgent(t, ctx, client, "agent-a", 1)
+	joinB := joinAgent(t, ctx, client, "agent-b", 2)
+	if joinA.GetCellId() == joinB.GetCellId() {
+		t.Fatalf("agent-a and agent-b landed on the same cell %s, want two distinct cells", joinA.GetCellId())
+	}
+
+	// Two independent tasks: with cell A first in sorted CellID order and
+	// both cells starting at Free==1, the first task lands on A (consuming
+	// its local Free) and the second spills to B.
+	jobID := submitMonteCarlo(t, ctx, client, 2)
+
+	pulledA := drainAllTasks(t, ctx, client, "agent-a")
+	pulledB := drainAllTasks(t, ctx, client, "agent-b")
+
+	if len(pulledA) != 1 {
+		t.Fatalf("agent-a pulled %d tasks, want exactly 1", len(pulledA))
+	}
+	if len(pulledB) != 1 {
+		t.Fatalf("agent-b pulled %d tasks, want exactly 1", len(pulledB))
+	}
+	if pulledA[0].GetId() == pulledB[0].GetId() {
+		t.Fatalf("agent-a and agent-b both pulled task %s", pulledA[0].GetId())
+	}
+	for _, task := range append(append([]*transport.Task{}, pulledA...), pulledB...) {
+		if task.GetJobId() != jobID {
+			t.Fatalf("pulled task %s has JobId %s, want %s", task.GetId(), task.GetJobId(), jobID)
+		}
+	}
+
+	// Neither agent has anything left to pull, and re-pulling never crosses
+	// into the other cell's (already-drained) queue.
+	if resp, err := client.PullTask(ctx, &transport.PullTaskRequest{Agent: "agent-a"}); err != nil {
+		t.Fatalf("PullTask(agent-a): %v", err)
+	} else if resp.GetHasTask() {
+		t.Fatalf("agent-a pulled an extra task %s after draining its cell", resp.GetTask().GetId())
+	}
+	if resp, err := client.PullTask(ctx, &transport.PullTaskRequest{Agent: "agent-b"}); err != nil {
+		t.Fatalf("PullTask(agent-b): %v", err)
+	} else if resp.GetHasTask() {
+		t.Fatalf("agent-b pulled an extra task %s after draining its cell", resp.GetTask().GetId())
+	}
+
+	srv.mu.Lock()
+	cellA, cellB := srv.agentCell["agent-a"], srv.agentCell["agent-b"]
+	srv.mu.Unlock()
+	if cellA == cellB {
+		t.Fatalf("server bookkeeping shows agent-a and agent-b on the same cell %s", cellA)
+	}
+}
+
+// TestPlacementIsDeterministicAcrossIdenticalRuns asserts the ticket's
+// determinism criterion: an identical submit sequence against an identical
+// registry snapshot places the same (decoded) task payloads on the agents
+// belonging to the same (relatively-ordered) cells across independent runs.
+func TestPlacementIsDeterministicAcrossIdenticalRuns(t *testing.T) {
+	run := func() (agentAInput, agentBInput []byte) {
+		clock := &testClock{}
+		client, _, teardown := newTestServer(t, twoCellConfig(), clock)
+		defer teardown()
+		ctx := context.Background()
+
+		joinAgent(t, ctx, client, "agent-a", 1)
+		joinAgent(t, ctx, client, "agent-b", 2)
+		submitMonteCarlo(t, ctx, client, 2)
+
+		pulledA := drainAllTasks(t, ctx, client, "agent-a")
+		pulledB := drainAllTasks(t, ctx, client, "agent-b")
+		if len(pulledA) != 1 || len(pulledB) != 1 {
+			t.Fatalf("run: pulled %d tasks for agent-a, %d for agent-b, want 1 each", len(pulledA), len(pulledB))
+		}
+		return pulledA[0].GetInput(), pulledB[0].GetInput()
+	}
+
+	a1, b1 := run()
+	a2, b2 := run()
+
+	if string(a1) != string(a2) {
+		t.Fatalf("agent-a's task Input differs across identical runs: %x vs %x", a1, a2)
+	}
+	if string(b1) != string(b2) {
+		t.Fatalf("agent-b's task Input differs across identical runs: %x vs %x", b1, b2)
+	}
+}
+
+// TestRegionFullHoldsPendingTasksUntilCapacityAppears covers the ticket's
+// "region-full holds, does not lose" criterion: with every existing cell at
+// Free==0, newly submitted tasks are held pending — no agent can pull them —
+// and once a cell with spare capacity appears (a new agent join forming a
+// cell whose capacity exceeds its founding member), the drain that JoinAgent
+// triggers places the held tasks so they become pullable, with no task lost
+// and none delivered twice.
+//
+// registry.Snapshot's Free is agent headroom (capacity minus member count),
+// unaffected by task placement (store.EnqueueTask never touches the
+// registry) — so a cell keeps offering room to newly-pending tasks in every
+// later drain until a real agent actually fills that headroom. The test
+// exploits that directly: agent-c tops off agent-b's cell for real (driving
+// its registry Free to 0) before agent-d forms the next new cell, which is
+// what makes the second pending task deterministically land on agent-d's
+// cell rather than agent-b's.
+func TestRegionFullHoldsPendingTasksUntilCapacityAppears(t *testing.T) {
+	clock := &testClock{}
+	cfg := twoCellConfig()
+	client, _, teardown := newTestServer(t, cfg, clock)
+	defer teardown()
+	ctx := context.Background()
+
+	// Fill the one cell exactly to capacity (two Caps-1 agents against a
+	// capacity-2 cell), leaving Free==0 fleet-wide.
+	joinAgent(t, ctx, client, "agent-a1", 1)
+	joinAgent(t, ctx, client, "agent-a2", 1)
+
+	jobID := submitMonteCarlo(t, ctx, client, 2)
+
+	// Region full: neither existing agent can pull anything, and the tasks
+	// are not dropped from the submit (SubmitJob itself succeeded).
+	if resp, err := client.PullTask(ctx, &transport.PullTaskRequest{Agent: "agent-a1"}); err != nil {
+		t.Fatalf("PullTask(agent-a1): %v", err)
+	} else if resp.GetHasTask() {
+		t.Fatalf("agent-a1 pulled a task while the region is full")
+	}
+	if resp, err := client.PullTask(ctx, &transport.PullTaskRequest{Agent: "agent-a2"}); err != nil {
+		t.Fatalf("PullTask(agent-a2): %v", err)
+	} else if resp.GetHasTask() {
+		t.Fatalf("agent-a2 pulled a task while the region is full")
+	}
+
+	// A new agent forms a brand-new (spare-capacity) cell: capacity appears,
+	// and joining drains one of the two pending tasks into it.
+	joinAgent(t, ctx, client, "agent-b", 1)
+	firstBatch := drainAllTasks(t, ctx, client, "agent-b")
+	if len(firstBatch) != 1 {
+		t.Fatalf("agent-b pulled %d tasks after its cell gained capacity, want exactly 1", len(firstBatch))
+	}
+
+	// The other pending task is still held — not lost, not yet placed
+	// anywhere — until more capacity appears.
+	if resp, err := client.PullTask(ctx, &transport.PullTaskRequest{Agent: "agent-a1"}); err != nil {
+		t.Fatalf("PullTask(agent-a1): %v", err)
+	} else if resp.GetHasTask() {
+		t.Fatalf("agent-a1 pulled a task that was never placed on its cell")
+	}
+
+	// agent-c fills agent-b's cell to its real capacity (Free 0), so it can
+	// no longer be picked for the still-pending task.
+	joinAgent(t, ctx, client, "agent-c", 1)
+	if resp, err := client.PullTask(ctx, &transport.PullTaskRequest{Agent: "agent-b"}); err != nil {
+		t.Fatalf("PullTask(agent-b): %v", err)
+	} else if resp.GetHasTask() {
+		t.Fatalf("agent-b pulled a second task after its cell's Free hit 0, want none placed there")
+	}
+
+	// One more brand-new cell appears; the last pending task drains into it.
+	joinAgent(t, ctx, client, "agent-d", 1)
+	secondBatch := drainAllTasks(t, ctx, client, "agent-d")
+	if len(secondBatch) != 1 {
+		t.Fatalf("agent-d pulled %d tasks after its cell gained capacity, want exactly 1", len(secondBatch))
+	}
+
+	// No task lost, none delivered twice: exactly the two admitted tasks
+	// were pulled in total, and their ids are distinct.
+	all := append(append([]*transport.Task{}, firstBatch...), secondBatch...)
+	if len(all) != 2 {
+		t.Fatalf("got %d tasks total across both drains, want 2", len(all))
+	}
+	if all[0].GetId() == all[1].GetId() {
+		t.Fatalf("the same task %s was delivered to two different agents", all[0].GetId())
+	}
+	for _, task := range all {
+		if task.GetJobId() != jobID {
+			t.Fatalf("pulled task %s has JobId %s, want %s", task.GetId(), task.GetJobId(), jobID)
+		}
+	}
+}
+
+// TestAggregationCompletesOverPerCellQueues covers the ticket's "aggregation
+// still completes" criterion: a full submit -> pull -> report -> aggregate
+// cycle, with the job's tasks spread across two cells' independent queues,
+// still produces a correct Aggregate — per-cell queueing is a routing
+// change, not a behavior change to job completion.
+func TestAggregationCompletesOverPerCellQueues(t *testing.T) {
+	clock := &testClock{}
+	client, _, teardown := newTestServer(t, twoCellConfig(), clock)
+	defer teardown()
+	ctx := context.Background()
+
+	joinAgent(t, ctx, client, "agent-a", 1)
+	joinAgent(t, ctx, client, "agent-b", 2)
+
+	jobID := submitMonteCarlo(t, ctx, client, 2)
+
+	pulledA := drainAllTasks(t, ctx, client, "agent-a")
+	pulledB := drainAllTasks(t, ctx, client, "agent-b")
+	if len(pulledA) != 1 || len(pulledB) != 1 {
+		t.Fatalf("pulled %d tasks for agent-a, %d for agent-b, want 1 each", len(pulledA), len(pulledB))
+	}
+
+	report := func(taskID string, count int64, sum, sumSq float64) {
+		t.Helper()
+		resp, err := client.ReportResult(ctx, &transport.ReportResultRequest{
+			TaskId: taskID,
+			Output: encodeMCResult(count, sum, sumSq),
+			Ok:     true,
+		})
+		if err != nil {
+			t.Fatalf("ReportResult(%s): %v", taskID, err)
+		}
+		if !resp.GetAccepted() {
+			t.Fatalf("ReportResult(%s) not accepted", taskID)
+		}
+	}
+	report(pulledA[0].GetId(), 1, 10, 100)
+	report(pulledB[0].GetId(), 1, 20, 400)
+
+	statusResp, err := client.JobStatus(ctx, &transport.JobStatusRequest{JobId: jobID})
+	if err != nil {
+		t.Fatalf("JobStatus: %v", err)
+	}
+	if !statusResp.GetDone() {
+		t.Fatalf("JobStatus: Done = false, want true after both cells' tasks reported")
+	}
+	gotCount, gotSum, _, _ := decodeMCAggregate(statusResp.GetAggregate())
+	if gotCount != 2 {
+		t.Fatalf("aggregate Count = %d, want 2", gotCount)
+	}
+	if gotSum != 30 {
+		t.Fatalf("aggregate Sum = %v, want 30", gotSum)
+	}
+}
+
+// TestMitosisMergeMigratesRetiredCellsQueuedTasks is a regression test for a
+// real task-loss bug the auditor caught: executeSplit/executeMerge move
+// agent membership and CellDown the retired cell(s), but never migrated
+// that cell's per-cell store queue. A task already EnqueueTask'd on a cell
+// that a merge (or split) retires had no agent mapped to it anymore (so
+// PullTask could never reach it) and was never added to s.pending (so no
+// drain would ever re-place it) — the owning job hung forever.
+//
+// This mirrors the auditor's exact repro: two agents, each the sole member
+// of its own cell, each cell holding one queued (not yet pulled) task, and
+// a mitosis merge under the default Target:4 threshold (both cells' size 1
+// is under Target, and their combined size 2 stays under Target too, so
+// mitosis.Decide's merge rule fires deterministically for this shape). It
+// asserts both tasks survive the merge, are still deliverable, and the job
+// still reaches Aggregate completion.
+func TestMitosisMergeMigratesRetiredCellsQueuedTasks(t *testing.T) {
+	clock := &testClock{}
+	cfg := twoCellConfig()
+	// Keep the background mitosis ticker from firing mid-test (it would
+	// otherwise race the test's own direct mitosisOnce call below); the
+	// merge decision itself still comes from the same core, cooldowns, and
+	// clock the background loop would use, just invoked deterministically
+	// instead of waited for over wall-clock time.
+	cfg.MitosisInterval = time.Hour
+	cfg.MitosisThresholds = mitosis.Thresholds{Target: 4, CooldownNS: 0}
+	client, srv, teardown := newTestServer(t, cfg, clock)
+	defer teardown()
+	ctx := context.Background()
+
+	// Two agents, two distinct cells (same shape as
+	// TestPerCellQueuesIsolateTasksByCell): each cell's size (1) is under
+	// Target (4), and their combined size (2) stays under Target too, so
+	// mitosis.Decide will merge them.
+	joinA := joinAgent(t, ctx, client, "agent-a", 1)
+	joinB := joinAgent(t, ctx, client, "agent-b", 2)
+	if joinA.GetCellId() == joinB.GetCellId() {
+		t.Fatalf("agent-a and agent-b landed on the same cell %s, want two distinct cells", joinA.GetCellId())
+	}
+
+	// One task lands on each cell — queued, not yet pulled by either agent —
+	// exactly the state a retiring cell's queue must not lose.
+	jobID := submitMonteCarlo(t, ctx, client, 2)
+
+	srv.mitosisOnce()
+
+	// The merge retired both original cells into one; confirm via Ps that no
+	// agent was lost across the reshape (mirrors TestMitosisSplitsOversizedCell).
+	psResp, err := client.Ps(ctx, &transport.PsRequest{})
+	if err != nil {
+		t.Fatalf("Ps: %v", err)
+	}
+	if psResp.GetCells() != 1 {
+		t.Fatalf("Ps after merge: Cells = %d, want 1 (agent-a's and agent-b's cells should have merged)", psResp.GetCells())
+	}
+	if psResp.GetMachines() != 2 {
+		t.Fatalf("Ps after merge: Machines = %d, want 2 (no agent lost across the merge)", psResp.GetMachines())
+	}
+
+	// The bug: both cells' queued tasks must survive the merge and still be
+	// deliverable — the merge's own end-of-tick drain (mitosisOnce ->
+	// drainPendingLocked) must have re-placed them onto the merged cell.
+	// Both agents now share that one cell, so either PullTask call may
+	// surface either task; what must hold is that both are still there and
+	// neither was dropped or delivered twice.
+	var pulled []*transport.Task
+	pulled = append(pulled, drainAllTasks(t, ctx, client, "agent-a")...)
+	pulled = append(pulled, drainAllTasks(t, ctx, client, "agent-b")...)
+	if len(pulled) != 2 {
+		t.Fatalf("pulled %d tasks after the merge, want 2 — a merge must not orphan a retired cell's queued tasks", len(pulled))
+	}
+	if pulled[0].GetId() == pulled[1].GetId() {
+		t.Fatalf("the same task %s was delivered twice after the merge", pulled[0].GetId())
+	}
+	for _, task := range pulled {
+		if task.GetJobId() != jobID {
+			t.Fatalf("pulled task %s has JobId %s, want %s", task.GetId(), task.GetJobId(), jobID)
+		}
+	}
+
+	// The job must still reach completion — proving the merge does not hang
+	// it forever, which is exactly what the orphaned-queue bug did.
+	report := func(taskID string, count int64, sum, sumSq float64) {
+		t.Helper()
+		resp, err := client.ReportResult(ctx, &transport.ReportResultRequest{
+			TaskId: taskID,
+			Output: encodeMCResult(count, sum, sumSq),
+			Ok:     true,
+		})
+		if err != nil {
+			t.Fatalf("ReportResult(%s): %v", taskID, err)
+		}
+		if !resp.GetAccepted() {
+			t.Fatalf("ReportResult(%s) not accepted", taskID)
+		}
+	}
+	report(pulled[0].GetId(), 1, 10, 100)
+	report(pulled[1].GetId(), 1, 20, 400)
+
+	statusResp, err := client.JobStatus(ctx, &transport.JobStatusRequest{JobId: jobID})
+	if err != nil {
+		t.Fatalf("JobStatus: %v", err)
+	}
+	if !statusResp.GetDone() {
+		t.Fatalf("JobStatus: Done = false, want true — the job must complete despite the mitosis merge")
+	}
+	gotCount, gotSum, _, _ := decodeMCAggregate(statusResp.GetAggregate())
+	if gotCount != 2 {
+		t.Fatalf("aggregate Count = %d, want 2", gotCount)
+	}
+	if gotSum != 30 {
+		t.Fatalf("aggregate Sum = %v, want 30", gotSum)
 	}
 }
 

@@ -15,17 +15,13 @@ import (
 )
 
 // SubmitJob decomposes req into a JobSpec via admission.Admit and, on
-// acceptance, persists the job and enqueues its tasks.
-//
-// store.Store's task queue is a single FIFO shared across jobs (see the
-// store package doc: "P0 tasks are Independent, so a single FIFO queue
-// shared across jobs is sufficient"), not one queue per cell, so there is no
-// per-cell destination for placement.Place to route a task into in P0 — any
-// agent that calls PullTask may serve any pending task regardless of which
-// cell it belongs to. This resolves the ambiguity between the phase doc's
-// per-task placement.Place call and the delivered Store shape: tasks are
-// enqueued directly, and placement is left for a future phase that gives the
-// store per-cell queues.
+// acceptance, persists the job and places each of its tasks via
+// placement.Place: a task that lands on a cell is enqueued on that cell's
+// store queue (see internal/shell/store), and a task placement.Place cannot
+// currently place (the region is full) is held in the server's ingress
+// pending buffer rather than dropped or failing the submit — SubmitJob ends
+// by draining that buffer once, so a task another goroutine's JoinAgent had
+// already made room for gets picked up immediately too.
 func (s *Server) SubmitJob(_ context.Context, req *transport.SubmitJobRequest) (*transport.SubmitJobResponse, error) {
 	s.mu.Lock()
 	jobID := s.newJobIDLocked()
@@ -46,16 +42,18 @@ func (s *Server) SubmitJob(_ context.Context, req *transport.SubmitJobRequest) (
 	if err := s.store.PutJob(spec); err != nil {
 		return nil, status.Errorf(codes.Internal, "put job: %v", err)
 	}
-	if err := s.store.EnqueueTasks(tasks); err != nil {
-		return nil, status.Errorf(codes.Internal, "enqueue tasks: %v", err)
-	}
 
 	s.mu.Lock()
 	for _, t := range tasks {
 		s.taskJob[t.ID] = t.JobID
 	}
 	s.taskTotal[jobID] = len(tasks)
+	s.pending = append(s.pending, tasks...)
+	err := s.drainPendingLocked()
 	s.mu.Unlock()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "place tasks: %v", err)
+	}
 
 	return &transport.SubmitJobResponse{JobId: string(jobID)}, nil
 }
@@ -87,6 +85,11 @@ func (s *Server) JoinAgent(_ context.Context, req *transport.JoinAgentRequest) (
 			Kind: registry.AgentJoined, Cell: decision.Cell, Agent: registry.AgentID(agent),
 		})
 		s.recordJoinLocked(agent, decision.Cell)
+		// A joining agent added capacity, so re-run placement over any tasks
+		// the ingress pending buffer is holding — one of them may now fit.
+		if err := s.drainPendingLocked(); err != nil {
+			return nil, status.Errorf(codes.Internal, "place pending tasks: %v", err)
+		}
 		return &transport.JoinAgentResponse{CellId: string(decision.Cell), Accepted: true}, nil
 
 	case rendezvous.NewCell:
@@ -98,6 +101,11 @@ func (s *Server) JoinAgent(_ context.Context, req *transport.JoinAgentRequest) (
 		s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.CellUp, Cell: cellID, Capacity: capacity})
 		s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.AgentJoined, Cell: cellID, Agent: registry.AgentID(agent)})
 		s.recordJoinLocked(agent, cellID)
+		// A new cell appeared, so re-run placement over the pending buffer
+		// the same way the Accept branch does.
+		if err := s.drainPendingLocked(); err != nil {
+			return nil, status.Errorf(codes.Internal, "place pending tasks: %v", err)
+		}
 		return &transport.JoinAgentResponse{CellId: string(cellID), Accepted: true}, nil
 
 	default:
@@ -127,10 +135,21 @@ func (s *Server) Heartbeat(_ context.Context, req *transport.HeartbeatRequest) (
 	return &transport.HeartbeatResponse{Ok: true}, nil
 }
 
-// PullTask serves the agent's runner loop from the store's pending-task
-// queue.
-func (s *Server) PullTask(_ context.Context, _ *transport.PullTaskRequest) (*transport.PullTaskResponse, error) {
-	t, ok, err := s.store.DequeueTask()
+// PullTask serves the agent's runner loop from its own cell's queue: it
+// looks up which cell req's agent belongs to (learned at JoinAgent) and
+// dequeues from that cell's queue only — an agent never receives a task
+// placed on another cell. An agent the server does not (or no longer) know
+// the cell of (never joined, or reaped) gets HasTask:false, the same
+// response as an empty queue.
+func (s *Server) PullTask(_ context.Context, req *transport.PullTaskRequest) (*transport.PullTaskResponse, error) {
+	s.mu.Lock()
+	cell, ok := s.agentCell[req.GetAgent()]
+	s.mu.Unlock()
+	if !ok {
+		return &transport.PullTaskResponse{HasTask: false}, nil
+	}
+
+	t, ok, err := s.store.DequeueTask(cell)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "dequeue task: %v", err)
 	}
