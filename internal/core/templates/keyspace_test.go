@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"encoding/binary"
 	"reflect"
 	"testing"
 
@@ -155,6 +156,59 @@ func TestKeyspaceDecomposeIsDeterministic(t *testing.T) {
 	first := KeyspaceDecompose(job)
 	for i := 0; i < 100; i++ {
 		if got := KeyspaceDecompose(job); !reflect.DeepEqual(got, first) {
+			t.Fatalf("non-deterministic output on run %d: %+v vs %+v", i, got, first)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------
+// KeyspaceCombine
+// -----------------------------------------------------------------------
+
+func hit(key uint64) model.Aggregate {
+	return model.Aggregate{Value: encodeKeyspaceHitForTest(key)}
+}
+
+// encodeKeyspaceHitForTest builds a Value in the layout decodeKeyspaceHit
+// expects; there is no exported encoder in this package (only e2e's, which
+// this package cannot import), so the test builds the bytes directly.
+func encodeKeyspaceHitForTest(key uint64) []byte {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, key)
+	return b
+}
+
+func TestKeyspaceCombine(t *testing.T) {
+	noHit := model.Aggregate{}
+
+	tests := []struct {
+		name string
+		a, b model.Aggregate
+		want model.Aggregate
+	}{
+		{"both empty is the identity", noHit, noHit, model.Aggregate{}},
+		{"a has the only hit", hit(5), noHit, model.Aggregate{Value: hit(5).Value}},
+		{"b has the only hit", noHit, hit(5), model.Aggregate{Value: hit(5).Value}},
+		{"smaller key wins, a smaller", hit(3), hit(9), model.Aggregate{Value: hit(3).Value}},
+		{"smaller key wins, b smaller", hit(9), hit(3), model.Aggregate{Value: hit(3).Value}},
+		{"tie keeps the (identical) key", hit(4), hit(4), model.Aggregate{Value: hit(4).Value}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := KeyspaceCombine(tt.a, tt.b)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("KeyspaceCombine() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestKeyspaceCombineIsDeterministic(t *testing.T) {
+	a, b := hit(3), hit(9)
+	first := KeyspaceCombine(a, b)
+	for i := 0; i < 100; i++ {
+		if got := KeyspaceCombine(a, b); !reflect.DeepEqual(got, first) {
 			t.Fatalf("non-deterministic output on run %d: %+v vs %+v", i, got, first)
 		}
 	}

@@ -118,3 +118,46 @@ func KeyspaceMerge(rs []model.TaskResult) model.Aggregate {
 	}
 	return model.Aggregate{Done: false}
 }
+
+// decodeKeyspaceHit decodes a keyspace-search hit's Value: the matching key
+// as a big-endian uint64. This is the layout KeyspaceMerge's callers use for
+// a winning TaskResult.Output (mirrored by hand for test workers in
+// internal/e2e/wire.go's Encode/DecodeKeyspaceHit). An empty or malformed
+// Value (no hit) decodes with ok == false.
+func decodeKeyspaceHit(b []byte) (key uint64, ok bool) {
+	if len(b) != 8 {
+		return 0, false
+	}
+	return binary.BigEndian.Uint64(b), true
+}
+
+// KeyspaceCombine merges two keyspace-search partial Aggregates' Value: the
+// deterministic winning hit. If only one side has a hit, that hit wins. If
+// both have a hit, the smaller matching key wins — a fixed,
+// order-independent tiebreak (ties can only occur if two shards somehow
+// report the same key, in which case both sides' Value is identical anyway).
+// If neither has a hit, the result carries no Value: the identity for this
+// combine, matching the zero Aggregate.
+//
+// KeyspaceCombine only combines Value: it is aggregate.Merge's job (the
+// caller) to combine JobID and Done, which follow the same rule at every
+// template, not just this one. The returned Aggregate's JobID and Done are
+// left at their zero values.
+func KeyspaceCombine(a, b model.Aggregate) model.Aggregate {
+	aKey, aHit := decodeKeyspaceHit(a.Value)
+	bKey, bHit := decodeKeyspaceHit(b.Value)
+
+	switch {
+	case aHit && bHit:
+		if bKey < aKey {
+			return model.Aggregate{Value: b.Value}
+		}
+		return model.Aggregate{Value: a.Value}
+	case aHit:
+		return model.Aggregate{Value: a.Value}
+	case bHit:
+		return model.Aggregate{Value: b.Value}
+	default:
+		return model.Aggregate{}
+	}
+}

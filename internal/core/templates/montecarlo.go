@@ -177,3 +177,50 @@ func MonteCarloMerge(rs []model.TaskResult) model.Aggregate {
 	}
 	return model.Aggregate{Value: agg.bytes(), Done: true}
 }
+
+// sumSqOf recovers a's sufficient-statistic sum-of-squares from its stored
+// mean and variance: since Variance == SumSq/Count - Mean^2, SumSq ==
+// Count*(Variance + Mean^2). A zero-count aggregate (the identity) has no
+// sum-of-squares to recover.
+func sumSqOf(a mcAggregate) float64 {
+	if a.Count == 0 {
+		return 0
+	}
+	return float64(a.Count) * (a.Variance + a.Mean*a.Mean)
+}
+
+// MonteCarloCombine merges two monte-carlo partial Aggregates' Value on
+// sufficient statistics: it recovers each side's sum-of-squares (sumSqOf),
+// adds Count, Sum, and the recovered SumSq elementwise, then re-derives Mean
+// and Variance from the combined totals — the same reduction MonteCarloMerge
+// performs over raw blocks, so re-merging an already-merged partial is
+// lossless, and associative up to floating-point rounding. A malformed or
+// empty Value (e.g. the zero Aggregate) decodes as the zero mcAggregate
+// (Count 0), the identity for this combine.
+//
+// MonteCarloCombine only combines Value: it is aggregate.Merge's job (the
+// caller) to combine JobID and Done, which follow the same rule at every
+// template, not just this one. The returned Aggregate's JobID and Done are
+// left at their zero values.
+func MonteCarloCombine(a, b model.Aggregate) model.Aggregate {
+	aAgg, ok := decodeMCAggregate(a.Value)
+	if !ok {
+		aAgg = mcAggregate{}
+	}
+	bAgg, ok := decodeMCAggregate(b.Value)
+	if !ok {
+		bAgg = mcAggregate{}
+	}
+
+	count := aAgg.Count + bAgg.Count
+	sum := aAgg.Sum + bAgg.Sum
+	sumSq := sumSqOf(aAgg) + sumSqOf(bAgg)
+
+	out := mcAggregate{Count: count, Sum: sum}
+	if count > 0 {
+		mean := sum / float64(count)
+		out.Mean = mean
+		out.Variance = sumSq/float64(count) - mean*mean
+	}
+	return model.Aggregate{Value: out.bytes()}
+}
