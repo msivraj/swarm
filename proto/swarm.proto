@@ -136,3 +136,58 @@ service GlobalRouter {
   rpc ReportPartial(ReportPartialRequest) returns (ReportPartialResponse);
   rpc JobStatus(JobStatusRequest) returns (JobStatusResponse);
 }
+
+// ---- P2 cross-node driver surface (leader <-> follower within one cell; additive) ----
+
+// AssignWork: the cell leader hands a follower its work for a barrier step or a
+// leader superstep. `payload` is the driver/template-encoded work shard.
+message AssignWorkRequest {
+  string job_id = 1;
+  string worker = 2;
+  int32 step = 3; // barrier step or leader superstep
+  bytes payload = 4;
+}
+message AssignWorkResponse { bool accepted = 1; }
+
+// StepReport: a follower reports its result for a step/superstep back to the
+// leader — barrier Done{partial} or leader Report{result}. `payload` is the
+// partial/result bytes the pure driver folds.
+message StepReportRequest {
+  string job_id = 1;
+  string worker = 2;
+  int32 step = 3;
+  bytes payload = 4;
+}
+message StepReportResponse { bool ok = 1; }
+
+// DeliverMessage: the message-passing driver delivers a Send to an actor's
+// mailbox on another node. At-least-once; `message_id` lets the receiver dedupe
+// (matches the driver's Seen set).
+message DeliverMessageRequest {
+  string job_id = 1;
+  string to_actor = 2;
+  string message_id = 3;
+  bytes payload = 4;
+}
+message DeliverMessageResponse { bool ok = 1; }
+
+// MemberHeartbeat: a follower's liveness ping to its cell leader; feeds
+// adaptive-by-tier detection's lastSeen. The leader (not the control plane)
+// tracks its own members because it sets the per-step deadlines and evicts
+// stragglers. A new RPC is warranted: the P0 ControlPlane.Heartbeat is
+// agent->control-plane, a different relationship than member->cell-leader.
+message MemberHeartbeatRequest {
+  string job_id = 1;
+  string worker = 2;
+}
+message MemberHeartbeatResponse { bool ok = 1; }
+
+// CellLeader is the P2 per-cell coordination surface (leader <-> follower within
+// one cell). Raft replication among leader candidates is handled INTERNALLY by
+// hashicorp/raft in the leader shell and needs no hand-written proto here.
+service CellLeader {
+  rpc AssignWork(AssignWorkRequest) returns (AssignWorkResponse);
+  rpc StepReport(StepReportRequest) returns (StepReportResponse);
+  rpc DeliverMessage(DeliverMessageRequest) returns (DeliverMessageResponse);
+  rpc MemberHeartbeat(MemberHeartbeatRequest) returns (MemberHeartbeatResponse);
+}

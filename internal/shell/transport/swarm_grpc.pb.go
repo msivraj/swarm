@@ -661,3 +661,227 @@ var GlobalRouter_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "swarm.proto",
 }
+
+const (
+	CellLeader_AssignWork_FullMethodName      = "/swarm.v1.CellLeader/AssignWork"
+	CellLeader_StepReport_FullMethodName      = "/swarm.v1.CellLeader/StepReport"
+	CellLeader_DeliverMessage_FullMethodName  = "/swarm.v1.CellLeader/DeliverMessage"
+	CellLeader_MemberHeartbeat_FullMethodName = "/swarm.v1.CellLeader/MemberHeartbeat"
+)
+
+// CellLeaderClient is the client API for CellLeader service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// CellLeader is the P2 per-cell coordination surface (leader <-> follower within
+// one cell). Raft replication among leader candidates is handled INTERNALLY by
+// hashicorp/raft in the leader shell and needs no hand-written proto here.
+type CellLeaderClient interface {
+	AssignWork(ctx context.Context, in *AssignWorkRequest, opts ...grpc.CallOption) (*AssignWorkResponse, error)
+	StepReport(ctx context.Context, in *StepReportRequest, opts ...grpc.CallOption) (*StepReportResponse, error)
+	DeliverMessage(ctx context.Context, in *DeliverMessageRequest, opts ...grpc.CallOption) (*DeliverMessageResponse, error)
+	MemberHeartbeat(ctx context.Context, in *MemberHeartbeatRequest, opts ...grpc.CallOption) (*MemberHeartbeatResponse, error)
+}
+
+type cellLeaderClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewCellLeaderClient(cc grpc.ClientConnInterface) CellLeaderClient {
+	return &cellLeaderClient{cc}
+}
+
+func (c *cellLeaderClient) AssignWork(ctx context.Context, in *AssignWorkRequest, opts ...grpc.CallOption) (*AssignWorkResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AssignWorkResponse)
+	err := c.cc.Invoke(ctx, CellLeader_AssignWork_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cellLeaderClient) StepReport(ctx context.Context, in *StepReportRequest, opts ...grpc.CallOption) (*StepReportResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StepReportResponse)
+	err := c.cc.Invoke(ctx, CellLeader_StepReport_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cellLeaderClient) DeliverMessage(ctx context.Context, in *DeliverMessageRequest, opts ...grpc.CallOption) (*DeliverMessageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeliverMessageResponse)
+	err := c.cc.Invoke(ctx, CellLeader_DeliverMessage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *cellLeaderClient) MemberHeartbeat(ctx context.Context, in *MemberHeartbeatRequest, opts ...grpc.CallOption) (*MemberHeartbeatResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MemberHeartbeatResponse)
+	err := c.cc.Invoke(ctx, CellLeader_MemberHeartbeat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// CellLeaderServer is the server API for CellLeader service.
+// All implementations must embed UnimplementedCellLeaderServer
+// for forward compatibility.
+//
+// CellLeader is the P2 per-cell coordination surface (leader <-> follower within
+// one cell). Raft replication among leader candidates is handled INTERNALLY by
+// hashicorp/raft in the leader shell and needs no hand-written proto here.
+type CellLeaderServer interface {
+	AssignWork(context.Context, *AssignWorkRequest) (*AssignWorkResponse, error)
+	StepReport(context.Context, *StepReportRequest) (*StepReportResponse, error)
+	DeliverMessage(context.Context, *DeliverMessageRequest) (*DeliverMessageResponse, error)
+	MemberHeartbeat(context.Context, *MemberHeartbeatRequest) (*MemberHeartbeatResponse, error)
+	mustEmbedUnimplementedCellLeaderServer()
+}
+
+// UnimplementedCellLeaderServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedCellLeaderServer struct{}
+
+func (UnimplementedCellLeaderServer) AssignWork(context.Context, *AssignWorkRequest) (*AssignWorkResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AssignWork not implemented")
+}
+func (UnimplementedCellLeaderServer) StepReport(context.Context, *StepReportRequest) (*StepReportResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StepReport not implemented")
+}
+func (UnimplementedCellLeaderServer) DeliverMessage(context.Context, *DeliverMessageRequest) (*DeliverMessageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeliverMessage not implemented")
+}
+func (UnimplementedCellLeaderServer) MemberHeartbeat(context.Context, *MemberHeartbeatRequest) (*MemberHeartbeatResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MemberHeartbeat not implemented")
+}
+func (UnimplementedCellLeaderServer) mustEmbedUnimplementedCellLeaderServer() {}
+func (UnimplementedCellLeaderServer) testEmbeddedByValue()                    {}
+
+// UnsafeCellLeaderServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to CellLeaderServer will
+// result in compilation errors.
+type UnsafeCellLeaderServer interface {
+	mustEmbedUnimplementedCellLeaderServer()
+}
+
+func RegisterCellLeaderServer(s grpc.ServiceRegistrar, srv CellLeaderServer) {
+	// If the following call panics, it indicates UnimplementedCellLeaderServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&CellLeader_ServiceDesc, srv)
+}
+
+func _CellLeader_AssignWork_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssignWorkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CellLeaderServer).AssignWork(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CellLeader_AssignWork_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CellLeaderServer).AssignWork(ctx, req.(*AssignWorkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CellLeader_StepReport_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StepReportRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CellLeaderServer).StepReport(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CellLeader_StepReport_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CellLeaderServer).StepReport(ctx, req.(*StepReportRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CellLeader_DeliverMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeliverMessageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CellLeaderServer).DeliverMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CellLeader_DeliverMessage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CellLeaderServer).DeliverMessage(ctx, req.(*DeliverMessageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CellLeader_MemberHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MemberHeartbeatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CellLeaderServer).MemberHeartbeat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CellLeader_MemberHeartbeat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CellLeaderServer).MemberHeartbeat(ctx, req.(*MemberHeartbeatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// CellLeader_ServiceDesc is the grpc.ServiceDesc for CellLeader service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var CellLeader_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "swarm.v1.CellLeader",
+	HandlerType: (*CellLeaderServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "AssignWork",
+			Handler:    _CellLeader_AssignWork_Handler,
+		},
+		{
+			MethodName: "StepReport",
+			Handler:    _CellLeader_StepReport_Handler,
+		},
+		{
+			MethodName: "DeliverMessage",
+			Handler:    _CellLeader_DeliverMessage_Handler,
+		},
+		{
+			MethodName: "MemberHeartbeat",
+			Handler:    _CellLeader_MemberHeartbeat_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "swarm.proto",
+}

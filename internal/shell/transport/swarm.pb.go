@@ -1576,6 +1576,451 @@ func (x *ReportPartialResponse) GetOk() bool {
 	return false
 }
 
+// AssignWork: the cell leader hands a follower its work for a barrier step or a
+// leader superstep. `payload` is the driver/template-encoded work shard.
+type AssignWorkRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Worker        string                 `protobuf:"bytes,2,opt,name=worker,proto3" json:"worker,omitempty"`
+	Step          int32                  `protobuf:"varint,3,opt,name=step,proto3" json:"step,omitempty"` // barrier step or leader superstep
+	Payload       []byte                 `protobuf:"bytes,4,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AssignWorkRequest) Reset() {
+	*x = AssignWorkRequest{}
+	mi := &file_swarm_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AssignWorkRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AssignWorkRequest) ProtoMessage() {}
+
+func (x *AssignWorkRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AssignWorkRequest.ProtoReflect.Descriptor instead.
+func (*AssignWorkRequest) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *AssignWorkRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *AssignWorkRequest) GetWorker() string {
+	if x != nil {
+		return x.Worker
+	}
+	return ""
+}
+
+func (x *AssignWorkRequest) GetStep() int32 {
+	if x != nil {
+		return x.Step
+	}
+	return 0
+}
+
+func (x *AssignWorkRequest) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+type AssignWorkResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Accepted      bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AssignWorkResponse) Reset() {
+	*x = AssignWorkResponse{}
+	mi := &file_swarm_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AssignWorkResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AssignWorkResponse) ProtoMessage() {}
+
+func (x *AssignWorkResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AssignWorkResponse.ProtoReflect.Descriptor instead.
+func (*AssignWorkResponse) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *AssignWorkResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+// StepReport: a follower reports its result for a step/superstep back to the
+// leader — barrier Done{partial} or leader Report{result}. `payload` is the
+// partial/result bytes the pure driver folds.
+type StepReportRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Worker        string                 `protobuf:"bytes,2,opt,name=worker,proto3" json:"worker,omitempty"`
+	Step          int32                  `protobuf:"varint,3,opt,name=step,proto3" json:"step,omitempty"`
+	Payload       []byte                 `protobuf:"bytes,4,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StepReportRequest) Reset() {
+	*x = StepReportRequest{}
+	mi := &file_swarm_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StepReportRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StepReportRequest) ProtoMessage() {}
+
+func (x *StepReportRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StepReportRequest.ProtoReflect.Descriptor instead.
+func (*StepReportRequest) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *StepReportRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *StepReportRequest) GetWorker() string {
+	if x != nil {
+		return x.Worker
+	}
+	return ""
+}
+
+func (x *StepReportRequest) GetStep() int32 {
+	if x != nil {
+		return x.Step
+	}
+	return 0
+}
+
+func (x *StepReportRequest) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+type StepReportResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StepReportResponse) Reset() {
+	*x = StepReportResponse{}
+	mi := &file_swarm_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StepReportResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StepReportResponse) ProtoMessage() {}
+
+func (x *StepReportResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StepReportResponse.ProtoReflect.Descriptor instead.
+func (*StepReportResponse) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *StepReportResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+// DeliverMessage: the message-passing driver delivers a Send to an actor's
+// mailbox on another node. At-least-once; `message_id` lets the receiver dedupe
+// (matches the driver's Seen set).
+type DeliverMessageRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	ToActor       string                 `protobuf:"bytes,2,opt,name=to_actor,json=toActor,proto3" json:"to_actor,omitempty"`
+	MessageId     string                 `protobuf:"bytes,3,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	Payload       []byte                 `protobuf:"bytes,4,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeliverMessageRequest) Reset() {
+	*x = DeliverMessageRequest{}
+	mi := &file_swarm_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeliverMessageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeliverMessageRequest) ProtoMessage() {}
+
+func (x *DeliverMessageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeliverMessageRequest.ProtoReflect.Descriptor instead.
+func (*DeliverMessageRequest) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *DeliverMessageRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *DeliverMessageRequest) GetToActor() string {
+	if x != nil {
+		return x.ToActor
+	}
+	return ""
+}
+
+func (x *DeliverMessageRequest) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
+func (x *DeliverMessageRequest) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+type DeliverMessageResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeliverMessageResponse) Reset() {
+	*x = DeliverMessageResponse{}
+	mi := &file_swarm_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeliverMessageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeliverMessageResponse) ProtoMessage() {}
+
+func (x *DeliverMessageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeliverMessageResponse.ProtoReflect.Descriptor instead.
+func (*DeliverMessageResponse) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *DeliverMessageResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+// MemberHeartbeat: a follower's liveness ping to its cell leader; feeds
+// adaptive-by-tier detection's lastSeen. The leader (not the control plane)
+// tracks its own members because it sets the per-step deadlines and evicts
+// stragglers. A new RPC is warranted: the P0 ControlPlane.Heartbeat is
+// agent->control-plane, a different relationship than member->cell-leader.
+type MemberHeartbeatRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Worker        string                 `protobuf:"bytes,2,opt,name=worker,proto3" json:"worker,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MemberHeartbeatRequest) Reset() {
+	*x = MemberHeartbeatRequest{}
+	mi := &file_swarm_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MemberHeartbeatRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MemberHeartbeatRequest) ProtoMessage() {}
+
+func (x *MemberHeartbeatRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MemberHeartbeatRequest.ProtoReflect.Descriptor instead.
+func (*MemberHeartbeatRequest) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *MemberHeartbeatRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *MemberHeartbeatRequest) GetWorker() string {
+	if x != nil {
+		return x.Worker
+	}
+	return ""
+}
+
+type MemberHeartbeatResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MemberHeartbeatResponse) Reset() {
+	*x = MemberHeartbeatResponse{}
+	mi := &file_swarm_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MemberHeartbeatResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MemberHeartbeatResponse) ProtoMessage() {}
+
+func (x *MemberHeartbeatResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MemberHeartbeatResponse.ProtoReflect.Descriptor instead.
+func (*MemberHeartbeatResponse) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *MemberHeartbeatResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
 var File_swarm_proto protoreflect.FileDescriptor
 
 const file_swarm_proto_rawDesc = "" +
@@ -1674,6 +2119,33 @@ const file_swarm_proto_rawDesc = "" +
 	"\x14ReportPartialRequest\x124\n" +
 	"\apartial\x18\x01 \x01(\v2\x1a.swarm.v1.PartialAggregateR\apartial\"'\n" +
 	"\x15ReportPartialResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"p\n" +
+	"\x11AssignWorkRequest\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x16\n" +
+	"\x06worker\x18\x02 \x01(\tR\x06worker\x12\x12\n" +
+	"\x04step\x18\x03 \x01(\x05R\x04step\x12\x18\n" +
+	"\apayload\x18\x04 \x01(\fR\apayload\"0\n" +
+	"\x12AssignWorkResponse\x12\x1a\n" +
+	"\baccepted\x18\x01 \x01(\bR\baccepted\"p\n" +
+	"\x11StepReportRequest\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x16\n" +
+	"\x06worker\x18\x02 \x01(\tR\x06worker\x12\x12\n" +
+	"\x04step\x18\x03 \x01(\x05R\x04step\x12\x18\n" +
+	"\apayload\x18\x04 \x01(\fR\apayload\"$\n" +
+	"\x12StepReportResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"\x82\x01\n" +
+	"\x15DeliverMessageRequest\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x19\n" +
+	"\bto_actor\x18\x02 \x01(\tR\atoActor\x12\x1d\n" +
+	"\n" +
+	"message_id\x18\x03 \x01(\tR\tmessageId\x12\x18\n" +
+	"\apayload\x18\x04 \x01(\fR\apayload\"(\n" +
+	"\x16DeliverMessageResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"G\n" +
+	"\x16MemberHeartbeatRequest\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x16\n" +
+	"\x06worker\x18\x02 \x01(\tR\x06worker\")\n" +
+	"\x17MemberHeartbeatResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok*m\n" +
 	"\bCoupling\x12\x18\n" +
 	"\x14COUPLING_INDEPENDENT\x10\x00\x12\x14\n" +
@@ -1698,7 +2170,15 @@ const file_swarm_proto_rawDesc = "" +
 	"\x0ePublishSummary\x12\x1f.swarm.v1.PublishSummaryRequest\x1a .swarm.v1.PublishSummaryResponse\x12J\n" +
 	"\rGetGlobalView\x12\x1b.swarm.v1.GlobalViewRequest\x1a\x1c.swarm.v1.GlobalViewResponse\x12P\n" +
 	"\rReportPartial\x12\x1e.swarm.v1.ReportPartialRequest\x1a\x1f.swarm.v1.ReportPartialResponse\x12D\n" +
-	"\tJobStatus\x12\x1a.swarm.v1.JobStatusRequest\x1a\x1b.swarm.v1.JobStatusResponseB=Z;github.com/msivraj/swarm/internal/shell/transport;transportb\x06proto3"
+	"\tJobStatus\x12\x1a.swarm.v1.JobStatusRequest\x1a\x1b.swarm.v1.JobStatusResponse2\xcb\x02\n" +
+	"\n" +
+	"CellLeader\x12G\n" +
+	"\n" +
+	"AssignWork\x12\x1b.swarm.v1.AssignWorkRequest\x1a\x1c.swarm.v1.AssignWorkResponse\x12G\n" +
+	"\n" +
+	"StepReport\x12\x1b.swarm.v1.StepReportRequest\x1a\x1c.swarm.v1.StepReportResponse\x12S\n" +
+	"\x0eDeliverMessage\x12\x1f.swarm.v1.DeliverMessageRequest\x1a .swarm.v1.DeliverMessageResponse\x12V\n" +
+	"\x0fMemberHeartbeat\x12 .swarm.v1.MemberHeartbeatRequest\x1a!.swarm.v1.MemberHeartbeatResponseB=Z;github.com/msivraj/swarm/internal/shell/transport;transportb\x06proto3"
 
 var (
 	file_swarm_proto_rawDescOnce sync.Once
@@ -1713,46 +2193,54 @@ func file_swarm_proto_rawDescGZIP() []byte {
 }
 
 var file_swarm_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_swarm_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_swarm_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_swarm_proto_goTypes = []any{
-	(Coupling)(0),                  // 0: swarm.v1.Coupling
-	(Health)(0),                    // 1: swarm.v1.Health
-	(*SubmitJobRequest)(nil),       // 2: swarm.v1.SubmitJobRequest
-	(*SubmitJobResponse)(nil),      // 3: swarm.v1.SubmitJobResponse
-	(*JoinAgentRequest)(nil),       // 4: swarm.v1.JoinAgentRequest
-	(*JoinAgentResponse)(nil),      // 5: swarm.v1.JoinAgentResponse
-	(*HeartbeatRequest)(nil),       // 6: swarm.v1.HeartbeatRequest
-	(*HeartbeatResponse)(nil),      // 7: swarm.v1.HeartbeatResponse
-	(*Task)(nil),                   // 8: swarm.v1.Task
-	(*PullTaskRequest)(nil),        // 9: swarm.v1.PullTaskRequest
-	(*PullTaskResponse)(nil),       // 10: swarm.v1.PullTaskResponse
-	(*ReportResultRequest)(nil),    // 11: swarm.v1.ReportResultRequest
-	(*ReportResultResponse)(nil),   // 12: swarm.v1.ReportResultResponse
-	(*PsRequest)(nil),              // 13: swarm.v1.PsRequest
-	(*PsResponse)(nil),             // 14: swarm.v1.PsResponse
-	(*JobStatusRequest)(nil),       // 15: swarm.v1.JobStatusRequest
-	(*JobStatusResponse)(nil),      // 16: swarm.v1.JobStatusResponse
-	(*JobSpec)(nil),                // 17: swarm.v1.JobSpec
-	(*RegionalSummary)(nil),        // 18: swarm.v1.RegionalSummary
-	(*RegionView)(nil),             // 19: swarm.v1.RegionView
-	(*PublishSummaryRequest)(nil),  // 20: swarm.v1.PublishSummaryRequest
-	(*PublishSummaryResponse)(nil), // 21: swarm.v1.PublishSummaryResponse
-	(*GlobalViewRequest)(nil),      // 22: swarm.v1.GlobalViewRequest
-	(*GlobalViewResponse)(nil),     // 23: swarm.v1.GlobalViewResponse
-	(*DispatchTasksRequest)(nil),   // 24: swarm.v1.DispatchTasksRequest
-	(*DispatchTasksResponse)(nil),  // 25: swarm.v1.DispatchTasksResponse
-	(*PartialAggregate)(nil),       // 26: swarm.v1.PartialAggregate
-	(*ReportPartialRequest)(nil),   // 27: swarm.v1.ReportPartialRequest
-	(*ReportPartialResponse)(nil),  // 28: swarm.v1.ReportPartialResponse
-	nil,                            // 29: swarm.v1.SubmitJobRequest.ParamsEntry
-	nil,                            // 30: swarm.v1.JobSpec.ParamsEntry
+	(Coupling)(0),                   // 0: swarm.v1.Coupling
+	(Health)(0),                     // 1: swarm.v1.Health
+	(*SubmitJobRequest)(nil),        // 2: swarm.v1.SubmitJobRequest
+	(*SubmitJobResponse)(nil),       // 3: swarm.v1.SubmitJobResponse
+	(*JoinAgentRequest)(nil),        // 4: swarm.v1.JoinAgentRequest
+	(*JoinAgentResponse)(nil),       // 5: swarm.v1.JoinAgentResponse
+	(*HeartbeatRequest)(nil),        // 6: swarm.v1.HeartbeatRequest
+	(*HeartbeatResponse)(nil),       // 7: swarm.v1.HeartbeatResponse
+	(*Task)(nil),                    // 8: swarm.v1.Task
+	(*PullTaskRequest)(nil),         // 9: swarm.v1.PullTaskRequest
+	(*PullTaskResponse)(nil),        // 10: swarm.v1.PullTaskResponse
+	(*ReportResultRequest)(nil),     // 11: swarm.v1.ReportResultRequest
+	(*ReportResultResponse)(nil),    // 12: swarm.v1.ReportResultResponse
+	(*PsRequest)(nil),               // 13: swarm.v1.PsRequest
+	(*PsResponse)(nil),              // 14: swarm.v1.PsResponse
+	(*JobStatusRequest)(nil),        // 15: swarm.v1.JobStatusRequest
+	(*JobStatusResponse)(nil),       // 16: swarm.v1.JobStatusResponse
+	(*JobSpec)(nil),                 // 17: swarm.v1.JobSpec
+	(*RegionalSummary)(nil),         // 18: swarm.v1.RegionalSummary
+	(*RegionView)(nil),              // 19: swarm.v1.RegionView
+	(*PublishSummaryRequest)(nil),   // 20: swarm.v1.PublishSummaryRequest
+	(*PublishSummaryResponse)(nil),  // 21: swarm.v1.PublishSummaryResponse
+	(*GlobalViewRequest)(nil),       // 22: swarm.v1.GlobalViewRequest
+	(*GlobalViewResponse)(nil),      // 23: swarm.v1.GlobalViewResponse
+	(*DispatchTasksRequest)(nil),    // 24: swarm.v1.DispatchTasksRequest
+	(*DispatchTasksResponse)(nil),   // 25: swarm.v1.DispatchTasksResponse
+	(*PartialAggregate)(nil),        // 26: swarm.v1.PartialAggregate
+	(*ReportPartialRequest)(nil),    // 27: swarm.v1.ReportPartialRequest
+	(*ReportPartialResponse)(nil),   // 28: swarm.v1.ReportPartialResponse
+	(*AssignWorkRequest)(nil),       // 29: swarm.v1.AssignWorkRequest
+	(*AssignWorkResponse)(nil),      // 30: swarm.v1.AssignWorkResponse
+	(*StepReportRequest)(nil),       // 31: swarm.v1.StepReportRequest
+	(*StepReportResponse)(nil),      // 32: swarm.v1.StepReportResponse
+	(*DeliverMessageRequest)(nil),   // 33: swarm.v1.DeliverMessageRequest
+	(*DeliverMessageResponse)(nil),  // 34: swarm.v1.DeliverMessageResponse
+	(*MemberHeartbeatRequest)(nil),  // 35: swarm.v1.MemberHeartbeatRequest
+	(*MemberHeartbeatResponse)(nil), // 36: swarm.v1.MemberHeartbeatResponse
+	nil,                             // 37: swarm.v1.SubmitJobRequest.ParamsEntry
+	nil,                             // 38: swarm.v1.JobSpec.ParamsEntry
 }
 var file_swarm_proto_depIdxs = []int32{
 	0,  // 0: swarm.v1.SubmitJobRequest.coupling:type_name -> swarm.v1.Coupling
-	29, // 1: swarm.v1.SubmitJobRequest.params:type_name -> swarm.v1.SubmitJobRequest.ParamsEntry
+	37, // 1: swarm.v1.SubmitJobRequest.params:type_name -> swarm.v1.SubmitJobRequest.ParamsEntry
 	8,  // 2: swarm.v1.PullTaskResponse.task:type_name -> swarm.v1.Task
 	0,  // 3: swarm.v1.JobSpec.coupling:type_name -> swarm.v1.Coupling
-	30, // 4: swarm.v1.JobSpec.params:type_name -> swarm.v1.JobSpec.ParamsEntry
+	38, // 4: swarm.v1.JobSpec.params:type_name -> swarm.v1.JobSpec.ParamsEntry
 	1,  // 5: swarm.v1.RegionalSummary.health:type_name -> swarm.v1.Health
 	1,  // 6: swarm.v1.RegionView.health:type_name -> swarm.v1.Health
 	18, // 7: swarm.v1.PublishSummaryRequest.summary:type_name -> swarm.v1.RegionalSummary
@@ -1773,21 +2261,29 @@ var file_swarm_proto_depIdxs = []int32{
 	22, // 22: swarm.v1.GlobalRouter.GetGlobalView:input_type -> swarm.v1.GlobalViewRequest
 	27, // 23: swarm.v1.GlobalRouter.ReportPartial:input_type -> swarm.v1.ReportPartialRequest
 	15, // 24: swarm.v1.GlobalRouter.JobStatus:input_type -> swarm.v1.JobStatusRequest
-	3,  // 25: swarm.v1.ControlPlane.SubmitJob:output_type -> swarm.v1.SubmitJobResponse
-	5,  // 26: swarm.v1.ControlPlane.JoinAgent:output_type -> swarm.v1.JoinAgentResponse
-	7,  // 27: swarm.v1.ControlPlane.Heartbeat:output_type -> swarm.v1.HeartbeatResponse
-	10, // 28: swarm.v1.ControlPlane.PullTask:output_type -> swarm.v1.PullTaskResponse
-	12, // 29: swarm.v1.ControlPlane.ReportResult:output_type -> swarm.v1.ReportResultResponse
-	14, // 30: swarm.v1.ControlPlane.Ps:output_type -> swarm.v1.PsResponse
-	16, // 31: swarm.v1.ControlPlane.JobStatus:output_type -> swarm.v1.JobStatusResponse
-	25, // 32: swarm.v1.ControlPlane.DispatchTasks:output_type -> swarm.v1.DispatchTasksResponse
-	3,  // 33: swarm.v1.GlobalRouter.Submit:output_type -> swarm.v1.SubmitJobResponse
-	21, // 34: swarm.v1.GlobalRouter.PublishSummary:output_type -> swarm.v1.PublishSummaryResponse
-	23, // 35: swarm.v1.GlobalRouter.GetGlobalView:output_type -> swarm.v1.GlobalViewResponse
-	28, // 36: swarm.v1.GlobalRouter.ReportPartial:output_type -> swarm.v1.ReportPartialResponse
-	16, // 37: swarm.v1.GlobalRouter.JobStatus:output_type -> swarm.v1.JobStatusResponse
-	25, // [25:38] is the sub-list for method output_type
-	12, // [12:25] is the sub-list for method input_type
+	29, // 25: swarm.v1.CellLeader.AssignWork:input_type -> swarm.v1.AssignWorkRequest
+	31, // 26: swarm.v1.CellLeader.StepReport:input_type -> swarm.v1.StepReportRequest
+	33, // 27: swarm.v1.CellLeader.DeliverMessage:input_type -> swarm.v1.DeliverMessageRequest
+	35, // 28: swarm.v1.CellLeader.MemberHeartbeat:input_type -> swarm.v1.MemberHeartbeatRequest
+	3,  // 29: swarm.v1.ControlPlane.SubmitJob:output_type -> swarm.v1.SubmitJobResponse
+	5,  // 30: swarm.v1.ControlPlane.JoinAgent:output_type -> swarm.v1.JoinAgentResponse
+	7,  // 31: swarm.v1.ControlPlane.Heartbeat:output_type -> swarm.v1.HeartbeatResponse
+	10, // 32: swarm.v1.ControlPlane.PullTask:output_type -> swarm.v1.PullTaskResponse
+	12, // 33: swarm.v1.ControlPlane.ReportResult:output_type -> swarm.v1.ReportResultResponse
+	14, // 34: swarm.v1.ControlPlane.Ps:output_type -> swarm.v1.PsResponse
+	16, // 35: swarm.v1.ControlPlane.JobStatus:output_type -> swarm.v1.JobStatusResponse
+	25, // 36: swarm.v1.ControlPlane.DispatchTasks:output_type -> swarm.v1.DispatchTasksResponse
+	3,  // 37: swarm.v1.GlobalRouter.Submit:output_type -> swarm.v1.SubmitJobResponse
+	21, // 38: swarm.v1.GlobalRouter.PublishSummary:output_type -> swarm.v1.PublishSummaryResponse
+	23, // 39: swarm.v1.GlobalRouter.GetGlobalView:output_type -> swarm.v1.GlobalViewResponse
+	28, // 40: swarm.v1.GlobalRouter.ReportPartial:output_type -> swarm.v1.ReportPartialResponse
+	16, // 41: swarm.v1.GlobalRouter.JobStatus:output_type -> swarm.v1.JobStatusResponse
+	30, // 42: swarm.v1.CellLeader.AssignWork:output_type -> swarm.v1.AssignWorkResponse
+	32, // 43: swarm.v1.CellLeader.StepReport:output_type -> swarm.v1.StepReportResponse
+	34, // 44: swarm.v1.CellLeader.DeliverMessage:output_type -> swarm.v1.DeliverMessageResponse
+	36, // 45: swarm.v1.CellLeader.MemberHeartbeat:output_type -> swarm.v1.MemberHeartbeatResponse
+	29, // [29:46] is the sub-list for method output_type
+	12, // [12:29] is the sub-list for method input_type
 	12, // [12:12] is the sub-list for extension type_name
 	12, // [12:12] is the sub-list for extension extendee
 	0,  // [0:12] is the sub-list for field type_name
@@ -1804,9 +2300,9 @@ func file_swarm_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_swarm_proto_rawDesc), len(file_swarm_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   29,
+			NumMessages:   37,
 			NumExtensions: 0,
-			NumServices:   2,
+			NumServices:   3,
 		},
 		GoTypes:           file_swarm_proto_goTypes,
 		DependencyIndexes: file_swarm_proto_depIdxs,
