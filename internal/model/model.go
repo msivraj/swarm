@@ -15,8 +15,9 @@ type CellID string
 // a value, never a live handle.
 type CellView struct {
 	ID   CellID
-	Size int // current member count
-	Free int // free capacity
+	Size int    // current member count
+	Free int    // free capacity
+	Caps CapSet // capabilities this cell offers; nil == none (P0/P1 behavior unchanged)
 }
 
 // JobID uniquely identifies a submitted job.
@@ -49,6 +50,10 @@ type JobSpec struct {
 	// Params holds string CLI/job-file parameters. Widen to typed values in a
 	// follow-up if the planner needs them — not guessed here.
 	Params map[string]string
+	// MinMembers is the gang admission floor (B4): the job needs at least
+	// this many members placed together before it starts. 0 means the job
+	// is not a gang and has no floor (P0/P1 behavior unchanged).
+	MinMembers int
 }
 
 // Task is one unit of independent work decomposed from a JobSpec.
@@ -57,6 +62,9 @@ type Task struct {
 	JobID   JobID
 	Input   []byte
 	Attempt int
+	// Requires lists the capabilities this task needs; nil means none
+	// required (P0/P1 behavior unchanged).
+	Requires CapSet
 }
 
 // TaskResult is the outcome an agent reports for a Task.
