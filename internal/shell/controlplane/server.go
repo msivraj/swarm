@@ -66,6 +66,10 @@ type Server struct {
 	peerView      []model.RegionView                        // cached GlobalRouter.GetGlobalView peers (excluding this region), refreshed by the publish loop; nil until the first successful poll
 	nextCellID    int
 	nextJobID     int
+
+	gangReserved map[model.CellID]int            // cell -> slots currently held by an admitted gang's reservation (see gang.go)
+	gangJobs     map[model.JobID]gangReservation // job -> its committed Place reservation, once admitted
+	gangPending  []model.JobSpec                 // gang JobSpecs admitGangLocked returned Wait for, FIFO, retried by retryPendingGangsLocked on capacity change
 }
 
 // New returns a Server ready to Serve. now supplies the clock (and the
@@ -101,6 +105,8 @@ func New(st store.Store, cfg Config, now func() model.Instant) *Server {
 		resultSink:    make(map[model.JobID]string),
 		reportedTasks: make(map[model.JobID]map[model.TaskID]struct{}),
 		finalized:     make(map[model.JobID]struct{}),
+		gangReserved:  make(map[model.CellID]int),
+		gangJobs:      make(map[model.JobID]gangReservation),
 	}
 }
 

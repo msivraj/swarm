@@ -107,6 +107,10 @@ func (s *Server) mitosisOnce() {
 	// There is no RPC caller to report an error to from a background loop,
 	// so this mirrors applyRegistryEventLocked's handling of SetRegistry.
 	_ = s.drainPendingLocked()
+	// A split/merge can also change per-cell free capacity, so this is also
+	// the gang pending queue's dedicated retry tick (#71), matching
+	// drainPendingLocked's own rationale just above.
+	s.retryPendingGangsLocked()
 	s.mu.Unlock()
 }
 
