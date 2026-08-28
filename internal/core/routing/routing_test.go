@@ -439,3 +439,95 @@ func TestSummarizeIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// -----------------------------------------------------------------------
+// Decide
+// -----------------------------------------------------------------------
+
+// TestDecideDelegatesToRoute asserts Decide is exactly route's exported
+// entry point — same output for the same input — across every shape route's
+// own table test exercises (no regions, none healthy, one eligible, tight
+// multi-eligible, independent spread).
+func TestDecideDelegatesToRoute(t *testing.T) {
+	independent := model.JobSpec{ID: "job-1", Coupling: model.Independent}
+	tight := model.JobSpec{ID: "job-2", Coupling: model.Barrier}
+
+	tests := []struct {
+		name    string
+		job     model.JobSpec
+		regions []model.RegionView
+	}{
+		{"no regions", independent, nil},
+		{"one eligible", independent, []model.RegionView{region("a", 5, 1, model.Healthy)}},
+		{"tight multi-eligible", tight, []model.RegionView{
+			region("b", 5, 1, model.Healthy),
+			region("a", 9, 1, model.Healthy),
+		}},
+		{"independent spread", independent, []model.RegionView{
+			region("c", 3, 1, model.Healthy),
+			region("a", 1, 1, model.Healthy),
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			want := route(tt.job, tt.regions)
+			got := Decide(tt.job, tt.regions)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("Decide() = %+v, want %+v (route()'s own output)", got, want)
+			}
+		})
+	}
+}
+
+// -----------------------------------------------------------------------
+// Summaries
+// -----------------------------------------------------------------------
+
+// TestSummariesSortedByRegionID asserts Summaries projects a GlobalView's
+// map into a slice in stable, ascending RegionID order regardless of the
+// order summaries were folded in — the shell (issue #45) depends on this to
+// build a deterministic []model.RegionView from the merged view.
+func TestSummariesSortedByRegionID(t *testing.T) {
+	v := viewOf(
+		summary("c", 3, 1, model.Healthy, 1),
+		summary("a", 1, 1, model.Healthy, 1),
+		summary("b", 2, 1, model.Healthy, 1),
+	)
+
+	got := Summaries(v)
+	wantIDs := []model.RegionID{"a", "b", "c"}
+	if len(got) != len(wantIDs) {
+		t.Fatalf("Summaries() returned %d entries, want %d", len(got), len(wantIDs))
+	}
+	for i, id := range wantIDs {
+		if got[i].Region != id {
+			t.Fatalf("Summaries()[%d].Region = %q, want %q", i, got[i].Region, id)
+		}
+	}
+}
+
+// TestSummariesEmptyView asserts an empty GlobalView projects to an empty,
+// non-nil-safe slice rather than panicking.
+func TestSummariesEmptyView(t *testing.T) {
+	got := Summaries(GlobalView{})
+	if len(got) != 0 {
+		t.Fatalf("Summaries(empty view) = %+v, want empty", got)
+	}
+}
+
+// TestSummariesIsDeterministic guards the core's defining property:
+// identical inputs always produce identical output, in stable sorted order,
+// regardless of the fold order that built the view.
+func TestSummariesIsDeterministic(t *testing.T) {
+	v := viewOf(
+		summary("z", 1, 1, model.Healthy, 0),
+		summary("a", 1, 1, model.Healthy, 0),
+		summary("m", 1, 1, model.Healthy, 0),
+	)
+	first := Summaries(v)
+	for i := 0; i < 100; i++ {
+		if got := Summaries(v); !reflect.DeepEqual(got, first) {
+			t.Fatalf("non-deterministic output on run %d: %+v vs %+v", i, got, first)
+		}
+	}
+}
