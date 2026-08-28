@@ -56,10 +56,13 @@ type Server struct {
 	agentCell     map[string]model.CellID                   // agent -> the cell it currently belongs to
 	cellAgents    map[model.CellID]map[string]struct{}      // cell -> its member agents
 	cooldowns     map[model.CellID]model.Instant            // cell -> last mitosis resize instant
-	taskJob       map[model.TaskID]model.JobID              // task -> owning job, learned at SubmitJob
-	taskTotal     map[model.JobID]int                       // job -> total tasks admitted for it
+	taskJob       map[model.TaskID]model.JobID              // task -> owning job, learned at SubmitJob/DispatchTasks
+	taskTotal     map[model.JobID]int                       // job -> total tasks admitted/dispatched for it at this region
+	taskCell      map[model.TaskID]model.CellID             // task -> the cell (or the spillCellID sentinel) its by-cell roll-up group is keyed on
+	resultSink    map[model.JobID]string                    // job -> result_sink ("" means self: this region owns the final aggregate)
 	reportedTasks map[model.JobID]map[model.TaskID]struct{} // job -> distinct task IDs that have reported at least one result
-	pending       []model.Task                              // tasks placement.Place could not assign to any cell yet (region full); drained as capacity appears
+	pending       []model.Task                              // tasks placement.Place (and, in regional mode, placement.PlaceAcross) could not assign anywhere yet; drained as capacity or a peer appears
+	peerView      []model.RegionView                        // cached GlobalRouter.GetGlobalView peers (excluding this region), refreshed by the publish loop; nil until the first successful poll
 	nextCellID    int
 	nextJobID     int
 }
@@ -69,7 +72,19 @@ type Server struct {
 // reads time.Now itself outside this injected function, keeping every
 // decision it drives through the pure cores reproducible from (state, event,
 // now) triples.
+//
+// cfg's GlobalRouterDialer/PeerDialer default to their production gRPC
+// implementations when left nil, matching internal/shell/agent's Config
+// defaulting convention; tests override them directly on the returned
+// *Server before calling Serve (same package, same as tests already reach
+// into e.g. srv.lastSeen).
 func New(st store.Store, cfg Config, now func() model.Instant) *Server {
+	if cfg.GlobalRouterDialer == nil {
+		cfg.GlobalRouterDialer = GRPCGlobalRouterDialer()
+	}
+	if cfg.PeerDialer == nil {
+		cfg.PeerDialer = GRPCPeerDialer()
+	}
 	return &Server{
 		store:         st,
 		cfg:           cfg,
@@ -81,21 +96,24 @@ func New(st store.Store, cfg Config, now func() model.Instant) *Server {
 		cooldowns:     make(map[model.CellID]model.Instant),
 		taskJob:       make(map[model.TaskID]model.JobID),
 		taskTotal:     make(map[model.JobID]int),
+		taskCell:      make(map[model.TaskID]model.CellID),
+		resultSink:    make(map[model.JobID]string),
 		reportedTasks: make(map[model.JobID]map[model.TaskID]struct{}),
 	}
 }
 
-// Serve registers the ControlPlane service on lis, starts the reaper and
-// mitosis background loops, and blocks serving RPCs until the gRPC server
-// stops (via Stop or lis closing). It returns the error grpc.Server.Serve
-// returns.
+// Serve registers the ControlPlane service on lis, starts the reaper,
+// mitosis, and publish background loops, and blocks serving RPCs until the
+// gRPC server stops (via Stop or lis closing). It returns the error
+// grpc.Server.Serve returns.
 func (s *Server) Serve(lis net.Listener) error {
 	s.grpcServer = grpc.NewServer()
 	transport.RegisterControlPlaneServer(s.grpcServer, s)
 
-	s.wg.Add(2)
+	s.wg.Add(3)
 	go s.reapLoop()
 	go s.mitosisLoop()
+	go s.publishLoop()
 
 	err := s.grpcServer.Serve(lis)
 	close(s.stop)
@@ -144,6 +162,15 @@ func (s *Server) applyRegistryEventLocked(ev registry.RegistryEvent) []registry.
 // P0-unchanged function; only the CellView data fed to it evolves within
 // this one drain pass, exactly as a shell is meant to orchestrate repeated
 // core calls. The real registry (and thus agent admission) is untouched.
+//
+// A locally Assign'd task records taskCell[t.ID] = the cell it landed on, the
+// grouping key the by-cell roll-up (rollupByCell) reads. A task
+// placement.Place cannot fit locally falls through to trySpillLocked (S2,
+// issue #44): region-full is no longer an automatic hold-pending — in
+// regional mode (cfg.GlobalRouter set) it first tries placement.PlaceAcross
+// against the cached peer view, and only lands back in s.pending when no
+// peer qualifies either (or spill is disabled/inapplicable), preserving S1's
+// "hold, never lose" behavior for that case.
 func (s *Server) drainPendingLocked() error {
 	if len(s.pending) == 0 {
 		return nil
@@ -153,14 +180,18 @@ func (s *Server) drainPendingLocked() error {
 	remaining := make([]model.Task, 0, len(s.pending))
 	for _, t := range s.pending {
 		p := placement.Place(t, working)
-		if p.Kind != placement.Assign {
-			remaining = append(remaining, t)
+		if p.Kind == placement.Assign {
+			if err := s.store.EnqueueTask(p.Cell, t); err != nil {
+				return err
+			}
+			s.taskCell[t.ID] = p.Cell
+			decrementFreeLocal(working, p.Cell)
 			continue
 		}
-		if err := s.store.EnqueueTask(p.Cell, t); err != nil {
-			return err
+		if s.trySpillLocked(t, working) {
+			continue
 		}
-		decrementFreeLocal(working, p.Cell)
+		remaining = append(remaining, t)
 	}
 	s.pending = remaining
 	return nil
