@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"math"
 	"reflect"
 	"testing"
 
@@ -233,6 +234,114 @@ func TestMonteCarloDecomposeIsDeterministic(t *testing.T) {
 	first := MonteCarloDecompose(job)
 	for i := 0; i < 100; i++ {
 		if got := MonteCarloDecompose(job); !reflect.DeepEqual(got, first) {
+			t.Fatalf("non-deterministic output on run %d: %+v vs %+v", i, got, first)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------
+// MonteCarloCombine
+// -----------------------------------------------------------------------
+
+func mcPartial(count int64, sum, sumSq float64) model.Aggregate {
+	mean := 0.0
+	variance := 0.0
+	if count > 0 {
+		mean = sum / float64(count)
+		variance = sumSq/float64(count) - mean*mean
+	}
+	return model.Aggregate{Value: mcAggregate{Count: count, Sum: sum, Mean: mean, Variance: variance}.bytes()}
+}
+
+func TestMonteCarloCombine(t *testing.T) {
+	zero := model.Aggregate{}
+
+	tests := []struct {
+		name string
+		a, b model.Aggregate
+		want mcAggregate
+	}{
+		{"both empty is the identity", zero, zero, mcAggregate{}},
+		{"a is the identity", zero, mcPartial(4, 8, 20), mcAggregate{Count: 4, Sum: 8, Mean: 2, Variance: 1}},
+		{"b is the identity", mcPartial(4, 8, 20), zero, mcAggregate{Count: 4, Sum: 8, Mean: 2, Variance: 1}},
+		{
+			// {count:2, sum:4, sumSq:8} + itself: combined count=4 sum=8
+			// mean=2, sumSq=16 -> variance = 16/4 - 4 = 0.
+			name: "sums two non-identity partials",
+			a:    mcPartial(2, 4, 8),
+			b:    mcPartial(2, 4, 8),
+			want: mcAggregate{Count: 4, Sum: 8, Mean: 2, Variance: 0},
+		},
+		{
+			name: "malformed Value treated as identity",
+			a:    model.Aggregate{Value: []byte("not-valid")},
+			b:    mcPartial(4, 8, 20),
+			want: mcAggregate{Count: 4, Sum: 8, Mean: 2, Variance: 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MonteCarloCombine(tt.a, tt.b)
+			gotAgg, ok := decodeMCAggregate(got.Value)
+			if !ok {
+				t.Fatalf("MonteCarloCombine().Value is not a valid mcAggregate (%d bytes)", len(got.Value))
+			}
+			if gotAgg != tt.want {
+				t.Fatalf("MonteCarloCombine() = %+v, want %+v", gotAgg, tt.want)
+			}
+		})
+	}
+}
+
+// TestMonteCarloCombineReMergeLossless checks the ticket's headline claim: a
+// partial already produced by MonteCarloMerge can be recombined via
+// MonteCarloCombine and recover the same sufficient statistics as merging
+// the union of the raw blocks directly — the sumSq recovery (Count*(Variance
+// + Mean^2)) round-trips losslessly.
+func TestMonteCarloCombineReMergeLossless(t *testing.T) {
+	block := func(count int64, sum, sumSq float64) []byte {
+		return encodeMCResult(mcResult{Count: count, Sum: sum, SumSq: sumSq})
+	}
+
+	groupA := MonteCarloMerge([]model.TaskResult{
+		{OK: true, Output: block(2, 4, 8)},
+		{OK: true, Output: block(3, 9, 27)},
+	})
+	groupB := MonteCarloMerge([]model.TaskResult{
+		{OK: true, Output: block(1, 2, 4)},
+	})
+
+	got := MonteCarloCombine(groupA, groupB)
+	gotAgg, ok := decodeMCAggregate(got.Value)
+	if !ok {
+		t.Fatalf("MonteCarloCombine().Value is not a valid mcAggregate")
+	}
+
+	want := MonteCarloMerge([]model.TaskResult{
+		{OK: true, Output: block(2, 4, 8)},
+		{OK: true, Output: block(3, 9, 27)},
+		{OK: true, Output: block(1, 2, 4)},
+	})
+	wantAgg, ok := decodeMCAggregate(want.Value)
+	if !ok {
+		t.Fatalf("MonteCarloMerge().Value is not a valid mcAggregate")
+	}
+
+	const eps = 1e-9
+	if gotAgg.Count != wantAgg.Count ||
+		math.Abs(gotAgg.Sum-wantAgg.Sum) > eps ||
+		math.Abs(gotAgg.Mean-wantAgg.Mean) > eps ||
+		math.Abs(gotAgg.Variance-wantAgg.Variance) > eps {
+		t.Fatalf("hierarchical combine = %+v, want (flat merge) %+v", gotAgg, wantAgg)
+	}
+}
+
+func TestMonteCarloCombineIsDeterministic(t *testing.T) {
+	a, b := mcPartial(2, 4, 8), mcPartial(3, 9, 27)
+	first := MonteCarloCombine(a, b)
+	for i := 0; i < 100; i++ {
+		if got := MonteCarloCombine(a, b); !reflect.DeepEqual(got, first) {
 			t.Fatalf("non-deterministic output on run %d: %+v vs %+v", i, got, first)
 		}
 	}
