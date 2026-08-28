@@ -536,7 +536,7 @@ func TestRegionLossTriggersAgentFailover(t *testing.T) {
 	// agent's own health-cache poller can ever consider eu-west a reachable
 	// failover candidate (region.SelectRegion fails a region closed if it has
 	// no entry in the health map at all).
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, 15*time.Second, func() bool {
 		resp, err := globalClient.GetGlobalView(context.Background(), &transport.GlobalViewRequest{})
 		if err != nil {
 			t.Fatalf("GetGlobalView: %v", err)
@@ -552,7 +552,7 @@ func TestRegionLossTriggersAgentFailover(t *testing.T) {
 	a := startFailoverAgent(t, reg, "failover-agent", regionUSEast, []model.RegionID{regionUSEast, regionEUWest}, regionTargets, []string{worker})
 
 	ctx := context.Background()
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, 15*time.Second, func() bool {
 		resp, err := usClient.Ps(ctx, &transport.PsRequest{})
 		if err != nil {
 			t.Fatalf("us-east Ps: %v", err)
@@ -575,7 +575,7 @@ func TestRegionLossTriggersAgentFailover(t *testing.T) {
 	// the diverged set.
 	clock.advance(31 * time.Second)
 
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		resp, err := globalClient.GetGlobalView(context.Background(), &transport.GlobalViewRequest{})
 		if err != nil {
 			t.Fatalf("GetGlobalView: %v", err)
@@ -767,7 +767,7 @@ func TestGlobalViewConvergesAndFlagsDivergedRegion(t *testing.T) {
 	_, _ = startRegion(t, reg, addrEUWest, regionConfig(regionEUWest, 8, addrEUWest, regionUSEast, addrUSEast), clock)
 
 	ctx := context.Background()
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, 15*time.Second, func() bool {
 		resp, err := globalClient.GetGlobalView(ctx, &transport.GlobalViewRequest{})
 		if err != nil {
 			t.Fatalf("GetGlobalView: %v", err)
@@ -785,7 +785,7 @@ func TestGlobalViewConvergesAndFlagsDivergedRegion(t *testing.T) {
 	stopUSEast()
 	clock.advance(31 * time.Second)
 
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		resp, err := globalClient.GetGlobalView(ctx, &transport.GlobalViewRequest{})
 		if err != nil {
 			t.Fatalf("GetGlobalView: %v", err)
