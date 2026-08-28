@@ -9,7 +9,6 @@ import (
 	"github.com/msivraj/swarm/internal/core/admission"
 	"github.com/msivraj/swarm/internal/core/registry"
 	"github.com/msivraj/swarm/internal/core/rendezvous"
-	"github.com/msivraj/swarm/internal/core/templates"
 	"github.com/msivraj/swarm/internal/model"
 	"github.com/msivraj/swarm/internal/shell/transport"
 )
@@ -190,6 +189,7 @@ func (s *Server) ReportResult(_ context.Context, req *transport.ReportResultRequ
 	s.mu.Lock()
 	jobID, known := s.taskJob[taskID]
 	total := s.taskTotal[jobID]
+	sink := s.resultSink[jobID]
 	if known {
 		if s.reportedTasks[jobID] == nil {
 			s.reportedTasks[jobID] = make(map[model.TaskID]struct{})
@@ -204,54 +204,21 @@ func (s *Server) ReportResult(_ context.Context, req *transport.ReportResultRequ
 		return &transport.ReportResultResponse{Accepted: true}, nil
 	}
 
-	if err := s.maybeAggregate(jobID, total); err != nil {
+	// A spilled task's result forwards to its origin immediately, per task,
+	// rather than waiting on this region's own distinct-task gate — this
+	// region never owns that job's completion (ticket #44's "spilled task"
+	// semantics; see isSpillForward). A forward failure is not surfaced to
+	// the reporting agent: the result is already durably recorded here, and
+	// there is no retry queue for this ticket's scope to hang the RPC on.
+	if isSpillForward(sink, s.cfg.GlobalRouter) {
+		_ = s.forwardResultToOrigin(sink, result)
+		return &transport.ReportResultResponse{Accepted: true}, nil
+	}
+
+	if err := s.maybeRollup(jobID, total); err != nil {
 		return nil, status.Errorf(codes.Internal, "aggregate job %s: %v", jobID, err)
 	}
 	return &transport.ReportResultResponse{Accepted: true}, nil
-}
-
-// maybeAggregate computes and persists jobID's Aggregate once at least total
-// DISTINCT tasks have reported a result for it, dispatching to the job's
-// template merge function by name. The gate reads the distinct-TaskID count
-// ReportResult maintains in s.reportedTasks rather than the raw length of
-// store.ResultsForJob's slice, so a duplicate report cannot prematurely
-// satisfy it; the results fed to the merge are likewise deduped to one entry
-// per distinct task (see dedupeTaskResults) so a duplicate cannot corrupt
-// the merged value either.
-func (s *Server) maybeAggregate(jobID model.JobID, total int) error {
-	s.mu.Lock()
-	distinct := len(s.reportedTasks[jobID])
-	s.mu.Unlock()
-	if distinct < total {
-		return nil
-	}
-
-	results, err := s.store.ResultsForJob(jobID)
-	if err != nil {
-		return err
-	}
-	results = dedupeTaskResults(results)
-
-	spec, ok, err := s.store.GetJob(jobID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return nil
-	}
-
-	var agg model.Aggregate
-	switch spec.Template {
-	case admission.TemplateKeyspaceSearch:
-		agg = templates.KeyspaceMerge(results)
-	case admission.TemplateMonteCarlo:
-		agg = templates.MonteCarloMerge(results)
-	default:
-		return status.Errorf(codes.Internal, "unknown template %q for job %s", spec.Template, jobID)
-	}
-	agg.JobID = jobID
-
-	return s.store.PutAggregate(agg)
 }
 
 // dedupeTaskResults collapses results to at most one entry per TaskID: a

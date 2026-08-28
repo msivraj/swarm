@@ -119,13 +119,23 @@ func configureFailover(cfg *agent.Config, homeRegion, peerRegions, regionTargets
 	return nil
 }
 
-// runControlPlane starts the P0 control-plane gRPC server: an in-memory store,
+// runControlPlane starts the control-plane gRPC server: an in-memory store,
 // a real wall clock fed into controlplane.Server as the now data dependency
 // (the clock is read here, in the shell — never inside a core), and
-// controlplane.DefaultConfig's tunables.
+// controlplane.DefaultConfig's tunables, optionally extended into S2's
+// regional mode by the --region-id/--global-router/--summary-interval/
+// --peer-targets/--advertise-addr flags. Leaving --global-router empty (the
+// default) keeps this exactly P0/S1's single-region behavior —
+// controlplane.Config.GlobalRouter empty disables publish, spill, and
+// upward roll-up entirely.
 func runControlPlane(args []string) {
 	fs := flag.NewFlagSet("control-plane", flag.ExitOnError)
 	listen := fs.String("listen", ":7070", "address for the control-plane gRPC server to listen on")
+	regionID := fs.String("region-id", "", "this region's RegionID; stamps published summaries and reported partials (regional mode only)")
+	globalRouter := fs.String("global-router", "", "GlobalRouter dial address for publishing summaries, spilling, and rolling up partials; empty keeps this control plane in standalone P0 mode")
+	summaryInterval := fs.Duration("summary-interval", 0, "how often to publish a RegionalSummary to --global-router; 0 uses controlplane.DefaultConfig's default")
+	peerTargets := fs.String("peer-targets", "", "comma-separated region=host:port pairs mapping a peer RegionID to its control-plane dial address, for spill")
+	advertiseAddr := fs.String("advertise-addr", "", "dial address other regions use to reach this control plane (result_sink for a spilled task's result); defaults to --listen")
 	if err := fs.Parse(args); err != nil {
 		log.Fatalf("control-plane: %v", err)
 	}
@@ -135,11 +145,46 @@ func runControlPlane(args []string) {
 		log.Fatalf("control-plane: listen on %s: %v", *listen, err)
 	}
 
-	srv := controlplane.New(store.NewMemStore(), controlplane.DefaultConfig(), now)
+	cfg := controlplane.DefaultConfig()
+	cfg.RegionID = model.RegionID(*regionID)
+	cfg.GlobalRouter = *globalRouter
+	if *summaryInterval > 0 {
+		cfg.SummaryInterval = *summaryInterval
+	}
+	cfg.SelfAddress = *advertiseAddr
+	if cfg.SelfAddress == "" {
+		cfg.SelfAddress = *listen
+	}
+	cfg.PeerTargets, err = parsePeerTargets(*peerTargets)
+	if err != nil {
+		log.Fatalf("control-plane: %v", err)
+	}
+
+	srv := controlplane.New(store.NewMemStore(), cfg, now)
 	log.Printf("control-plane: listening on %s", *listen)
 	if err := srv.Serve(lis); err != nil {
 		log.Fatalf("control-plane: serve: %v", err)
 	}
+}
+
+// parsePeerTargets parses --peer-targets' "region=host:port,region=host:port"
+// form into controlplane.Config.PeerTargets, mirroring configureFailover's
+// --region-targets parsing above (kept separate rather than shared: that one
+// builds an agent.Config map, this one a controlplane.Config map, and the two
+// flag sets evolve independently).
+func parsePeerTargets(s string) (map[model.RegionID]string, error) {
+	targets := map[model.RegionID]string{}
+	if s == "" {
+		return targets, nil
+	}
+	for _, pair := range strings.Split(s, ",") {
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok {
+			return nil, fmt.Errorf("--peer-targets: invalid pair %q, want region=host:port", pair)
+		}
+		targets[model.RegionID(k)] = v
+	}
+	return targets, nil
 }
 
 // now supplies the wall clock as model.Instant data to the control plane — the

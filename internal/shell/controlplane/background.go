@@ -1,11 +1,14 @@
 package controlplane
 
 import (
+	"context"
 	"time"
 
 	"github.com/msivraj/swarm/internal/core/mitosis"
 	"github.com/msivraj/swarm/internal/core/registry"
+	"github.com/msivraj/swarm/internal/core/routing"
 	"github.com/msivraj/swarm/internal/model"
+	"github.com/msivraj/swarm/internal/shell/transport"
 )
 
 // reapLoop evicts agents that have gone quiet for longer than
@@ -226,5 +229,114 @@ func (s *Server) moveAgentsLocked(agents []string, dest model.CellID) {
 		s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.AgentJoined, Cell: dest, Agent: registry.AgentID(agent)})
 		s.cellAgents[dest][agent] = struct{}{}
 		s.agentCell[agent] = dest
+	}
+}
+
+// publishLoop drives the regional summary publish on a timer (S2, issue
+// #44): it mirrors reapLoop/mitosisLoop's shape (a wall-clock ticker driving
+// a *Once method), but is itself a no-op in standalone P0 mode
+// (cfg.GlobalRouter == "") — it still runs (and its wg.Done() still fires on
+// exit) so Serve's shutdown sequencing does not need a standalone-mode
+// special case, it just never ticks.
+func (s *Server) publishLoop() {
+	defer s.wg.Done()
+	if s.cfg.GlobalRouter == "" {
+		<-s.stop
+		return
+	}
+
+	ticker := time.NewTicker(s.cfg.SummaryInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.publishOnce()
+		case <-s.stop:
+			return
+		}
+	}
+}
+
+// publishOnce computes this region's RegionalSummary via routing.Summarize
+// over the current registry, stamps it with cfg.RegionID and the injected
+// clock, and calls GlobalRouter.PublishSummary. It then also refreshes the
+// cached peer view (GlobalRouter.GetGlobalView) that placement's spill
+// decision (trySpillLocked) reads — the same dial/tick drives both, since a
+// region already talking to GlobalRouter to publish is exactly the moment it
+// should also learn who else is out there to spill to.
+//
+// A dropped publish (dial or RPC failure) is silently retried next tick, the
+// same "logged and retried" contract reapLoop/mitosisLoop apply to their own
+// per-tick work — there is no RPC caller here to surface an error to, and
+// the clock read stays in this shell method, never inside a core.
+func (s *Server) publishOnce() {
+	s.mu.Lock()
+	reg := s.store.Registry()
+	s.mu.Unlock()
+
+	summary := routing.Summarize(reg)
+	summary.Region = s.cfg.RegionID
+	summary.At = s.now()
+
+	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	defer cancel()
+
+	client, closer, err := s.cfg.GlobalRouterDialer(ctx, s.cfg.GlobalRouter)
+	if err != nil {
+		return
+	}
+	defer func() { _ = closer.Close() }()
+
+	if _, err := client.PublishSummary(ctx, &transport.PublishSummaryRequest{Summary: toProtoSummary(summary)}); err != nil {
+		return
+	}
+
+	viewResp, err := client.GetGlobalView(ctx, &transport.GlobalViewRequest{})
+	if err != nil {
+		return
+	}
+	peers := make([]model.RegionView, 0, len(viewResp.GetRegions()))
+	for _, rv := range viewResp.GetRegions() {
+		id := model.RegionID(rv.GetId())
+		if id == s.cfg.RegionID {
+			continue // never spill "to" this region itself
+		}
+		peers = append(peers, model.RegionView{
+			ID:     id,
+			Free:   int(rv.GetFree()),
+			Cells:  int(rv.GetCells()),
+			Health: model.Health(rv.GetHealth()),
+		})
+	}
+
+	s.mu.Lock()
+	s.peerView = peers
+	s.mu.Unlock()
+}
+
+// toProtoSummary converts a routing.RegionalSummary to its wire form.
+func toProtoSummary(sum routing.RegionalSummary) *transport.RegionalSummary {
+	return &transport.RegionalSummary{
+		Region: string(sum.Region),
+		Free:   int32(sum.Free),
+		Cells:  int32(sum.Cells),
+		Health: toProtoHealth(sum.Health),
+		At:     int64(sum.At),
+	}
+}
+
+// toProtoHealth converts a model.Health to its wire enum. The two enums
+// share ordinal values by construction (see internal/model and swarm.proto),
+// but this is written as an explicit switch for the same reason
+// fromProtoCoupling is: a future divergence fails loudly instead of silently
+// mismapping.
+func toProtoHealth(h model.Health) transport.Health {
+	switch h {
+	case model.Degraded:
+		return transport.Health_HEALTH_DEGRADED
+	case model.Unreachable:
+		return transport.Health_HEALTH_UNREACHABLE
+	default:
+		return transport.Health_HEALTH_HEALTHY
 	}
 }
