@@ -47,6 +47,10 @@ func runAgent(args []string) error {
 	region := fs.String("region", "", "region this agent asks to join")
 	caps := fs.Int("caps", 1, "capacity units this agent offers")
 	exec := fs.String("exec", "", "native process to run per task, e.g. \"/usr/bin/my-worker --flag\"; the task's input is piped to its stdin and its stdout is captured as the result")
+	homeRegion := fs.String("home-region", "", "this agent's home RegionID; enables cross-region failover together with --peer-regions, --region-targets and --global-router")
+	peerRegions := fs.String("peer-regions", "", "comma-separated peer RegionIDs in nearest-first order (cross-region failover only)")
+	regionTargets := fs.String("region-targets", "", "comma-separated region=host:port pairs mapping a RegionID to its control-plane dial address (cross-region failover only)")
+	globalRouter := fs.String("global-router", "", "GlobalRouter dial address polled for cross-region health; empty disables cross-region failover")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -69,12 +73,50 @@ func runAgent(args []string) error {
 		cfg.Process.Argv = strings.Fields(*exec)
 	}
 
+	if err := configureFailover(&cfg, *homeRegion, *peerRegions, *regionTargets, *globalRouter); err != nil {
+		return err
+	}
+
 	a := agent.New(cfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	return a.Run(ctx)
+}
+
+// configureFailover fills in cfg's cross-region failover fields from the
+// agent-mode flags. It is a no-op (single-region P0 behavior) when
+// homeRegion is empty; --peer-regions, --region-targets and --global-router
+// are meaningless without it and are ignored in that case, matching
+// Config.GlobalRouter's "empty disables multi-region failover" contract.
+func configureFailover(cfg *agent.Config, homeRegion, peerRegions, regionTargets, globalRouter string) error {
+	if homeRegion == "" {
+		return nil
+	}
+
+	cfg.HomeRegion = model.RegionID(homeRegion)
+	cfg.KnownRegions = []model.RegionID{cfg.HomeRegion}
+	if peerRegions != "" {
+		for _, p := range strings.Split(peerRegions, ",") {
+			cfg.KnownRegions = append(cfg.KnownRegions, model.RegionID(p))
+		}
+	}
+
+	cfg.RegionTargets = map[model.RegionID]string{}
+	if regionTargets != "" {
+		for _, pair := range strings.Split(regionTargets, ",") {
+			k, v, ok := strings.Cut(pair, "=")
+			if !ok {
+				return fmt.Errorf("--region-targets: invalid pair %q, want region=host:port", pair)
+			}
+			cfg.RegionTargets[model.RegionID(k)] = v
+		}
+	}
+
+	cfg.GlobalRouter = globalRouter
+	cfg.GlobalViewDialer = agent.GRPCGlobalViewDialer()
+	return nil
 }
 
 // runControlPlane starts the P0 control-plane gRPC server: an in-memory store,

@@ -24,14 +24,16 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/msivraj/swarm/internal/core/region"
 	"github.com/msivraj/swarm/internal/model"
 	"github.com/msivraj/swarm/internal/shell/transport"
 )
 
 const (
-	defaultHeartbeatInterval = 5 * time.Second
-	defaultPullInterval      = 500 * time.Millisecond
-	clientPollInterval       = 20 * time.Millisecond
+	defaultHeartbeatInterval  = 5 * time.Second
+	defaultPullInterval       = 500 * time.Millisecond
+	defaultGlobalViewInterval = 2 * time.Second
+	clientPollInterval        = 20 * time.Millisecond
 )
 
 // Clock supplies the wall-clock instant the shell passes into agentreg.Step
@@ -138,6 +140,36 @@ type Config struct {
 
 	// Process configures native task execution.
 	Process ProcessSpec
+
+	// RegionTargets maps a RegionID to its control-plane dial address, for
+	// multi-region failover. Required (together with HomeRegion,
+	// KnownRegions and GlobalRouter) to enable cross-region failover; leave
+	// it nil for the single-region P0 behavior, which dials Targets instead.
+	RegionTargets map[model.RegionID]string
+	// HomeRegion is this agent's home region: the address execFailover
+	// starts from and the region.SelectRegion candidate list's first entry.
+	// Required for multi-region failover.
+	HomeRegion model.RegionID
+	// KnownRegions is the ranked candidate list region.SelectRegion walks:
+	// KnownRegions[0] must be HomeRegion, KnownRegions[1:] are peer regions
+	// in nearest-first order — slice position IS the nearness ranking, the
+	// core has no distance metric of its own. Required for multi-region
+	// failover.
+	KnownRegions []model.RegionID
+	// GlobalRouter is the dial address of the global routing layer's
+	// GetGlobalView RPC, polled on a timer to build the health map
+	// region.SelectRegion needs. Empty disables multi-region failover
+	// entirely: execFailover falls back to wrapping over Targets, matching
+	// single-region P0 behavior.
+	GlobalRouter string
+	// GlobalViewDialer opens a connection to GlobalRouter. Defaults to a
+	// plaintext gRPC dial (GRPCGlobalViewDialer). Tests supply a
+	// GlobalViewDialer backed by an in-process (bufconn) fake GlobalRouter.
+	GlobalViewDialer GlobalViewDialer
+	// GlobalViewInterval is how often the shell polls GetGlobalView to
+	// refresh the cached health map. Defaults to 2s. Ignored when
+	// GlobalRouter is empty.
+	GlobalViewInterval time.Duration
 }
 
 func (c Config) withDefaults() Config {
@@ -153,6 +185,12 @@ func (c Config) withDefaults() Config {
 	if c.PullInterval <= 0 {
 		c.PullInterval = defaultPullInterval
 	}
+	if c.GlobalViewDialer == nil {
+		c.GlobalViewDialer = GRPCGlobalViewDialer()
+	}
+	if c.GlobalViewInterval <= 0 {
+		c.GlobalViewInterval = defaultGlobalViewInterval
+	}
 	return c
 }
 
@@ -161,9 +199,21 @@ func (c Config) withDefaults() Config {
 type Agent struct {
 	cfg     Config
 	clients *clientHolder
+	health  *healthCache
 
 	mu        sync.Mutex
 	targetIdx int
+	// dialTarget is the current resolved dial address in multi-region mode
+	// (GlobalRouter set): execFailover writes it, currentTarget reads it.
+	// Unused in single-region mode, where targetIdx/Targets drive dialing
+	// instead.
+	dialTarget string
+	// regionAttempt is the failover attempt counter region.SelectRegion
+	// walks its ranked candidate list with. It increments on every
+	// execFailover call in multi-region mode and never resets, which is
+	// what makes repeated failover cycle through the candidate list rather
+	// than get stuck retrying the same one.
+	regionAttempt int
 	// enrolls counts how many times the shell has executed agentreg's Enroll
 	// command. It exists to make "enroll once, even across reconnects" — a
 	// property named directly in the ticket — observable from tests in this
@@ -174,25 +224,33 @@ type Agent struct {
 // New constructs an Agent from cfg, applying defaults for any field the
 // caller left zero.
 func New(cfg Config) *Agent {
-	return &Agent{
-		cfg:     cfg.withDefaults(),
+	cfg = cfg.withDefaults()
+	a := &Agent{
+		cfg:     cfg,
 		clients: newClientHolder(),
+		health:  newHealthCache(),
 	}
+	if cfg.GlobalRouter != "" {
+		a.dialTarget = cfg.RegionTargets[cfg.HomeRegion]
+	}
+	return a
 }
 
-// Run drives both the registration loop and the task-runner loop until ctx
-// is done or either loop returns a non-cancellation error, in which case Run
-// cancels the other loop and returns that error.
+// Run drives the registration loop, the task-runner loop, and (in
+// multi-region mode) the global-view poller until ctx is done or one of them
+// returns a non-cancellation error, in which case Run cancels the others and
+// returns that error.
 func (a *Agent) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() { errCh <- a.runRegistration(ctx) }()
 	go func() { errCh <- a.runRunner(ctx) }()
+	go func() { errCh <- a.runGlobalView(ctx) }()
 
 	var firstErr error
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		if err := <-errCh; err != nil && !errors.Is(err, context.Canceled) && firstErr == nil {
 			firstErr = err
 			cancel()
@@ -205,21 +263,45 @@ func (a *Agent) now() model.Instant { return a.cfg.Clock.Now() }
 func (a *Agent) jitter() float64    { return a.cfg.Jitter() }
 
 // currentTarget returns the dial target Failover last selected (or the
-// first one, initially).
+// first one, initially). In multi-region mode (GlobalRouter set) that is the
+// resolved address of whichever region execFailover last picked, starting
+// at HomeRegion's address; otherwise it is the current entry of Targets.
 func (a *Agent) currentTarget() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.cfg.GlobalRouter != "" {
+		return a.dialTarget
+	}
 	return a.cfg.Targets[a.targetIdx%len(a.cfg.Targets)]
 }
 
-// execFailover advances to the next configured dial target, wrapping. With
-// only one target configured it is a no-op — there is nowhere else to fail
-// over to.
+// execFailover resolves the next dial target for agentreg's Failover
+// command. Single-region mode (GlobalRouter unset) keeps P0's behavior:
+// advance to the next configured Targets entry, wrapping (a no-op with only
+// one target). Multi-region mode asks region.SelectRegion which RegionID to
+// try next — home first while it is reachable, then the ranked healthy
+// peers, cycling as regionAttempt advances — and resolves the chosen
+// RegionID to a dial address via RegionTargets. SelectRegion returning ""
+// (no reachable candidate) leaves dialTarget unchanged, so the shell keeps
+// retrying whatever it was already dialing (usually home).
 func (a *Agent) execFailover() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if n := len(a.cfg.Targets); n > 1 {
-		a.targetIdx = (a.targetIdx + 1) % n
+
+	if a.cfg.GlobalRouter == "" {
+		if n := len(a.cfg.Targets); n > 1 {
+			a.targetIdx = (a.targetIdx + 1) % n
+		}
+		return
+	}
+
+	selected := region.SelectRegion(a.cfg.KnownRegions, a.health.get(), true, a.regionAttempt)
+	a.regionAttempt++
+	if selected == "" {
+		return
+	}
+	if addr, ok := a.cfg.RegionTargets[selected]; ok && addr != "" {
+		a.dialTarget = addr
 	}
 }
 
