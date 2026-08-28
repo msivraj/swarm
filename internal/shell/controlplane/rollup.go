@@ -35,14 +35,33 @@ var mergeFuncs = map[string]func([]model.TaskResult) model.Aggregate{
 // that job's per-task raw results immediately (see isSpillForward) and skips
 // the roll-up gate entirely, since this region does not own that job's
 // completion.
+//
+// finalized latches the completion action (PutAggregate / reportPartialUp)
+// to run exactly once per job: the distinct>=total gate alone stays true
+// forever once a job completes, and ReportResult explicitly supports a
+// duplicate/retry report arriving after completion (see dedupeTaskResults) —
+// without this latch, such a report would re-run the completion action.
+// P0's self-sink action (PutAggregate) was an idempotent overwrite, so a
+// re-run was harmless; S2's global-sink action (reportPartialUp) is a
+// non-idempotent network call, so the gate this latch adds is required for
+// both branches to keep the "exactly once" contract. The check-and-set
+// happens under s.mu, atomically with the distinct>=total read, so two
+// concurrent ReportResult calls that both observe completion cannot both
+// pass the latch either.
 func (s *Server) maybeRollup(jobID model.JobID, total int) error {
 	s.mu.Lock()
 	distinct := len(s.reportedTasks[jobID])
-	sink := s.resultSink[jobID]
-	s.mu.Unlock()
 	if distinct < total {
+		s.mu.Unlock()
 		return nil
 	}
+	if _, done := s.finalized[jobID]; done {
+		s.mu.Unlock()
+		return nil
+	}
+	s.finalized[jobID] = struct{}{}
+	sink := s.resultSink[jobID]
+	s.mu.Unlock()
 
 	spec, ok, err := s.store.GetJob(jobID)
 	if err != nil {

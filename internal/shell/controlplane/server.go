@@ -61,6 +61,7 @@ type Server struct {
 	taskCell      map[model.TaskID]model.CellID             // task -> the cell (or the spillCellID sentinel) its by-cell roll-up group is keyed on
 	resultSink    map[model.JobID]string                    // job -> result_sink ("" means self: this region owns the final aggregate)
 	reportedTasks map[model.JobID]map[model.TaskID]struct{} // job -> distinct task IDs that have reported at least one result
+	finalized     map[model.JobID]struct{}                  // job -> present once maybeRollup has run its completion action (PutAggregate / reportPartialUp) for it, exactly once
 	pending       []model.Task                              // tasks placement.Place (and, in regional mode, placement.PlaceAcross) could not assign anywhere yet; drained as capacity or a peer appears
 	peerView      []model.RegionView                        // cached GlobalRouter.GetGlobalView peers (excluding this region), refreshed by the publish loop; nil until the first successful poll
 	nextCellID    int
@@ -99,6 +100,7 @@ func New(st store.Store, cfg Config, now func() model.Instant) *Server {
 		taskCell:      make(map[model.TaskID]model.CellID),
 		resultSink:    make(map[model.JobID]string),
 		reportedTasks: make(map[model.JobID]map[model.TaskID]struct{}),
+		finalized:     make(map[model.JobID]struct{}),
 	}
 }
 

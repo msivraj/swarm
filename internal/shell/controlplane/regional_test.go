@@ -459,6 +459,138 @@ func TestDispatchTasksGlobalSinkReportsOnePartialUp(t *testing.T) {
 	}
 }
 
+// --- regression: a duplicate/late report must not re-finalize a job -----
+
+// TestDuplicateReportAfterGlobalSinkCompletionReportsPartialOnce is a
+// regression test for a real bug the auditor caught: ReportResult's
+// distinct-task gate (distinct >= total) stays true forever once a job
+// completes, but a duplicate or late-retried report for an
+// already-reported task is an explicitly supported input (see
+// dedupeTaskResults) and re-enters maybeRollup after completion. For a
+// global-sink job, maybeRollup's completion action is the non-idempotent
+// network call GlobalRouter.ReportPartial — without a once-only latch, a
+// duplicate report after completion fires a SECOND ReportPartial, violating
+// "receives ONE region partial". This asserts a duplicate report delivered
+// after the job has already completed still yields exactly one
+// ReportPartial call.
+func TestDuplicateReportAfterGlobalSinkCompletionReportsPartialOnce(t *testing.T) {
+	clock := &testClock{}
+	fake, dial := startFakeGlobalRouter(t)
+
+	cfg := fastConfig()
+	cfg.RegionID = "region-c"
+	cfg.GlobalRouter = "fake-global-addr"
+	cfg.GlobalRouterDialer = dial
+	cfg.SummaryInterval = time.Hour
+	client, _, teardown := newTestServer(t, cfg, clock)
+	defer teardown()
+	ctx := context.Background()
+
+	joinAgent(t, ctx, client, "agent-1", 2)
+
+	jobID := "dispatched-global-job-dup"
+	dispatchResp, err := client.DispatchTasks(ctx, &transport.DispatchTasksRequest{
+		Job: &transport.JobSpec{Id: jobID, Template: "monte-carlo", Coupling: transport.Coupling_COUPLING_INDEPENDENT},
+		Tasks: []*transport.Task{
+			{Id: "dup-gt-1", JobId: jobID},
+			{Id: "dup-gt-2", JobId: jobID},
+		},
+		ResultSink: cfg.GlobalRouter,
+	})
+	if err != nil {
+		t.Fatalf("DispatchTasks: %v", err)
+	}
+	if !dispatchResp.GetAccepted() {
+		t.Fatalf("DispatchTasks not accepted: %s", dispatchResp.GetReason())
+	}
+
+	pulled := drainAllTasks(t, ctx, client, "agent-1")
+	if len(pulled) != 2 {
+		t.Fatalf("pulled %d tasks, want 2", len(pulled))
+	}
+
+	report := func(taskID string, sum float64) {
+		t.Helper()
+		resp, err := client.ReportResult(ctx, &transport.ReportResultRequest{
+			TaskId: taskID, Output: encodeMCResult(1, sum, sum*sum), Ok: true,
+		})
+		if err != nil {
+			t.Fatalf("ReportResult(%s): %v", taskID, err)
+		}
+		if !resp.GetAccepted() {
+			t.Fatalf("ReportResult(%s) not accepted", taskID)
+		}
+	}
+	report(pulled[0].GetId(), 10)
+	report(pulled[1].GetId(), 20) // completes the job: distinct (2) >= total (2)
+
+	if got := len(fake.reportedPartials()); got != 1 {
+		t.Fatalf("GlobalRouter received %d ReportPartial call(s) after initial completion, want exactly 1", got)
+	}
+
+	// A duplicate/retry report for an already-reported task, delivered after
+	// the job has already completed — distinct>=total is (still) true, but
+	// the completion action must not run again.
+	report(pulled[1].GetId(), 20)
+
+	if got := len(fake.reportedPartials()); got != 1 {
+		t.Fatalf("GlobalRouter received %d ReportPartial call(s) after a duplicate post-completion report, want exactly 1 (the bug: a duplicate re-triggered a second upward report)", got)
+	}
+}
+
+// TestDuplicateReportAfterSelfSinkCompletionKeepsOneAggregate is the
+// self-sink analogue of the regression above: a duplicate/late report
+// delivered after a locally-owned job has already completed must not change
+// (or fail to keep) the stored final Aggregate. P0's self-sink completion
+// action (store.PutAggregate) is an idempotent overwrite, so this was never
+// user-visibly broken, but it exercises the same once-only latch path the
+// global-sink fix added, guarding against a future non-idempotent self-sink
+// completion action regressing this silently.
+func TestDuplicateReportAfterSelfSinkCompletionKeepsOneAggregate(t *testing.T) {
+	clock := &testClock{}
+	client, _, teardown := newTestServer(t, fastConfig(), clock)
+	defer teardown()
+	ctx := context.Background()
+
+	joinAgent(t, ctx, client, "agent-1", 2)
+	jobID := submitMonteCarlo(t, ctx, client, 2)
+
+	pulled := drainAllTasks(t, ctx, client, "agent-1")
+	if len(pulled) != 2 {
+		t.Fatalf("pulled %d tasks, want 2", len(pulled))
+	}
+
+	report := func(taskID string, sum float64) {
+		t.Helper()
+		resp, err := client.ReportResult(ctx, &transport.ReportResultRequest{
+			TaskId: taskID, Output: encodeMCResult(1, sum, sum*sum), Ok: true,
+		})
+		if err != nil {
+			t.Fatalf("ReportResult(%s): %v", taskID, err)
+		}
+		if !resp.GetAccepted() {
+			t.Fatalf("ReportResult(%s) not accepted", taskID)
+		}
+	}
+	report(pulled[0].GetId(), 10)
+	report(pulled[1].GetId(), 20) // completes the job
+
+	// A duplicate/retry report delivered after completion.
+	report(pulled[1].GetId(), 20)
+
+	statusResp, err := client.JobStatus(ctx, &transport.JobStatusRequest{JobId: jobID})
+	if err != nil {
+		t.Fatalf("JobStatus: %v", err)
+	}
+	if !statusResp.GetDone() {
+		t.Fatalf("JobStatus: Done = false, want true")
+	}
+	gotCount, gotSum, _, _ := decodeMCAggregate(statusResp.GetAggregate())
+	if gotCount != 2 || gotSum != 30 {
+		t.Fatalf("aggregate (Count=%d, Sum=%v), want (Count=2, Sum=30) — unchanged by the post-completion duplicate", gotCount, gotSum)
+	}
+}
+
 // --- acceptance criterion 5: spills when full ----------------------------
 
 // spillTestConfig returns a fastConfig tuned for the spill tests: a
