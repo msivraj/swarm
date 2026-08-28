@@ -2,6 +2,10 @@
 // performs no I/O and reads no clock — the shell injects `now` and any cooldown
 // timestamps as data. This package is the reference shape every core follows:
 // take data, return commands, never execute an effect.
+//
+// Gate is a P2 delta: it enforces B3 (a coupled cell may only split/merge at
+// a checkpoint boundary) as a pure post-filter over Decide's output. It does
+// not change Decide's own behavior.
 package mitosis
 
 import "github.com/msivraj/swarm/internal/model"
@@ -18,10 +22,24 @@ const (
 
 // Command is a mitosis decision the shell will execute. Cores return Commands;
 // they never carry them out.
+//
+// Deferred marks a coupled cell's Split/Merge as postponed until the next
+// checkpoint boundary (B3, enforced by Gate) rather than dropped: the shell
+// re-offers the command once the cell's driver reaches its next checkpoint.
+// The zero value is false, so P0's Decide — which never sets it — is
+// unchanged and every existing caller/test stays green.
+//
+// Resolved ambiguity: the ticket offered either a `Deferred bool` field or a
+// separate `Defer` Op. A bool field was chosen: it lets a deferred command
+// keep its original Op/Cell/Other untouched — the command "survives"
+// deferral verbatim and is re-emitted unchanged at the checkpoint boundary,
+// as the acceptance criteria require — without wrapping or duplicating
+// Command, and it leaves P0's Decide byte-for-byte unchanged.
 type Command struct {
-	Op    Op
-	Cell  model.CellID // the cell to split, or the first cell to merge
-	Other model.CellID // the second cell, for Merge
+	Op       Op
+	Cell     model.CellID // the cell to split, or the first cell to merge
+	Other    model.CellID // the second cell, for Merge
+	Deferred bool         // true: postponed until the next checkpoint (B3)
 }
 
 // Thresholds configures the split/merge band and the cooldown window.
@@ -67,4 +85,37 @@ func inCooldown(cooldowns map[model.CellID]model.Instant, id model.CellID, now m
 		return false
 	}
 	return int64(now-last) < windowNS
+}
+
+// ResizeSafe reports whether a resize (Split or Merge) for a cell governed by
+// coupling c may execute right now. An Independent cell may always resize —
+// no driver depends on its membership staying fixed mid-step. A coupled cell
+// (Barrier, Leader, or MessagePassing) may resize only at a checkpoint
+// boundary (atCkpt == true): B3, resizing mid-step would race the driver's
+// lockstep and corrupt its coordination state.
+func ResizeSafe(c model.Coupling, atCkpt bool) bool {
+	if c == model.Independent {
+		return true
+	}
+	return atCkpt
+}
+
+// Gate enforces B3 over P0's Decide output: it is a pure post-filter, applied
+// per cell, that never changes Decide's own behavior. When ResizeSafe(c,
+// atCkpt) is true — an Independent cell at any time, or a coupled cell at a
+// checkpoint boundary — every command passes through unchanged. Otherwise
+// every command is marked Deferred (see Command) rather than dropped: the
+// shell holds it and re-offers it once the coupled cell's driver reaches its
+// next checkpoint, at which point Gate lets it through unchanged.
+func Gate(cmds []Command, c model.Coupling, atCkpt bool) []Command {
+	if cmds == nil {
+		return nil
+	}
+	safe := ResizeSafe(c, atCkpt)
+	out := make([]Command, len(cmds))
+	for i, cmd := range cmds {
+		cmd.Deferred = !safe
+		out[i] = cmd
+	}
+	return out
 }
