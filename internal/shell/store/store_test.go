@@ -84,12 +84,14 @@ func TestEnqueueDequeueFIFO(t *testing.T) {
 		{ID: "t2", JobID: "j1"},
 		{ID: "t3", JobID: "j1"},
 	}
-	if err := s.EnqueueTasks(tasks); err != nil {
-		t.Fatalf("EnqueueTasks() = %v, want nil", err)
+	for _, task := range tasks {
+		if err := s.EnqueueTask("cell-a", task); err != nil {
+			t.Fatalf("EnqueueTask(%+v) = %v, want nil", task, err)
+		}
 	}
 
 	for _, want := range tasks {
-		got, ok, err := s.DequeueTask()
+		got, ok, err := s.DequeueTask("cell-a")
 		if err != nil {
 			t.Fatalf("DequeueTask() err = %v, want nil", err)
 		}
@@ -104,7 +106,7 @@ func TestEnqueueDequeueFIFO(t *testing.T) {
 
 func TestDequeueEmptyReturnsNotOK(t *testing.T) {
 	s := NewMemStore()
-	got, ok, err := s.DequeueTask()
+	got, ok, err := s.DequeueTask("cell-a")
 	if err != nil {
 		t.Fatalf("DequeueTask() err = %v, want nil", err)
 	}
@@ -118,9 +120,9 @@ func TestDequeueEmptyReturnsNotOK(t *testing.T) {
 
 func TestEnqueueEmptyTaskID(t *testing.T) {
 	s := NewMemStore()
-	err := s.EnqueueTasks([]model.Task{{ID: "", JobID: "j1"}})
+	err := s.EnqueueTask("cell-a", model.Task{ID: "", JobID: "j1"})
 	if !errors.Is(err, ErrEmptyTaskID) {
-		t.Fatalf("EnqueueTasks(empty id) = %v, want %v", err, ErrEmptyTaskID)
+		t.Fatalf("EnqueueTask(empty id) = %v, want %v", err, ErrEmptyTaskID)
 	}
 }
 
@@ -128,22 +130,25 @@ func TestRequeueTask(t *testing.T) {
 	s := NewMemStore()
 	first := model.Task{ID: "t1", JobID: "j1"}
 	second := model.Task{ID: "t2", JobID: "j1"}
-	if err := s.EnqueueTasks([]model.Task{first, second}); err != nil {
-		t.Fatalf("EnqueueTasks() = %v, want nil", err)
+	if err := s.EnqueueTask("cell-a", first); err != nil {
+		t.Fatalf("EnqueueTask() = %v, want nil", err)
+	}
+	if err := s.EnqueueTask("cell-a", second); err != nil {
+		t.Fatalf("EnqueueTask() = %v, want nil", err)
 	}
 
 	// Dequeue t1, then requeue it — it should land behind t2, at the back.
-	got, ok, _ := s.DequeueTask()
+	got, ok, _ := s.DequeueTask("cell-a")
 	if !ok || !reflect.DeepEqual(got, first) {
 		t.Fatalf("DequeueTask() = %+v, %v, want %+v, true", got, ok, first)
 	}
-	if err := s.RequeueTask(first); err != nil {
+	if err := s.RequeueTask("cell-a", first); err != nil {
 		t.Fatalf("RequeueTask() = %v, want nil", err)
 	}
 
 	wantOrder := []model.Task{second, first}
 	for _, want := range wantOrder {
-		got, ok, _ := s.DequeueTask()
+		got, ok, _ := s.DequeueTask("cell-a")
 		if !ok || !reflect.DeepEqual(got, want) {
 			t.Fatalf("DequeueTask() = %+v, %v, want %+v, true", got, ok, want)
 		}
@@ -152,8 +157,54 @@ func TestRequeueTask(t *testing.T) {
 
 func TestRequeueEmptyTaskID(t *testing.T) {
 	s := NewMemStore()
-	if err := s.RequeueTask(model.Task{}); !errors.Is(err, ErrEmptyTaskID) {
+	if err := s.RequeueTask("cell-a", model.Task{}); !errors.Is(err, ErrEmptyTaskID) {
 		t.Fatalf("RequeueTask(empty) = %v, want %v", err, ErrEmptyTaskID)
+	}
+}
+
+// TestPerCellQueuesAreIsolated is the core P1 property this ticket adds: a
+// task enqueued on one cell is never visible to a DequeueTask call for a
+// different cell, and each cell's queue keeps its own independent FIFO
+// order.
+func TestPerCellQueuesAreIsolated(t *testing.T) {
+	s := NewMemStore()
+
+	a1 := model.Task{ID: "a1", JobID: "j1"}
+	a2 := model.Task{ID: "a2", JobID: "j1"}
+	b1 := model.Task{ID: "b1", JobID: "j1"}
+
+	if err := s.EnqueueTask("cell-a", a1); err != nil {
+		t.Fatalf("EnqueueTask(cell-a, a1) = %v, want nil", err)
+	}
+	if err := s.EnqueueTask("cell-b", b1); err != nil {
+		t.Fatalf("EnqueueTask(cell-b, b1) = %v, want nil", err)
+	}
+	if err := s.EnqueueTask("cell-a", a2); err != nil {
+		t.Fatalf("EnqueueTask(cell-a, a2) = %v, want nil", err)
+	}
+
+	// cell-b's queue must yield only b1, never a1 or a2.
+	got, ok, err := s.DequeueTask("cell-b")
+	if err != nil {
+		t.Fatalf("DequeueTask(cell-b) err = %v, want nil", err)
+	}
+	if !ok || !reflect.DeepEqual(got, b1) {
+		t.Fatalf("DequeueTask(cell-b) = %+v, %v, want %+v, true", got, ok, b1)
+	}
+	if _, ok, _ := s.DequeueTask("cell-b"); ok {
+		t.Fatalf("DequeueTask(cell-b) ok = true after draining cell-b's only task")
+	}
+
+	// cell-a's queue is untouched by cell-b's dequeues, and keeps its own
+	// FIFO order.
+	for _, want := range []model.Task{a1, a2} {
+		got, ok, err := s.DequeueTask("cell-a")
+		if err != nil {
+			t.Fatalf("DequeueTask(cell-a) err = %v, want nil", err)
+		}
+		if !ok || !reflect.DeepEqual(got, want) {
+			t.Fatalf("DequeueTask(cell-a) = %+v, %v, want %+v, true", got, ok, want)
+		}
 	}
 }
 
@@ -164,8 +215,10 @@ func TestPutResultAccumulatesPerJob(t *testing.T) {
 		{ID: "t2", JobID: "j1"},
 		{ID: "t3", JobID: "j2"},
 	}
-	if err := s.EnqueueTasks(tasks); err != nil {
-		t.Fatalf("EnqueueTasks() = %v, want nil", err)
+	for _, task := range tasks {
+		if err := s.EnqueueTask("cell-a", task); err != nil {
+			t.Fatalf("EnqueueTask(%+v) = %v, want nil", task, err)
+		}
 	}
 
 	results := []model.TaskResult{
@@ -328,10 +381,11 @@ func TestRegistrySetGetSwapsValue(t *testing.T) {
 }
 
 // TestConcurrentEnqueueDequeue guards the concurrency requirement: multiple
-// goroutines enqueueing and dequeueing at once must not race or lose/misplace
-// tasks. Run with -race.
+// goroutines enqueueing and dequeueing a single cell's queue at once must
+// not race or lose/misplace tasks. Run with -race.
 func TestConcurrentEnqueueDequeue(t *testing.T) {
 	s := NewMemStore()
+	const cell = model.CellID("cell-a")
 	const producers = 20
 	const perProducer = 50
 	const total = producers * perProducer
@@ -344,8 +398,8 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 			for i := 0; i < perProducer; i++ {
 				id := model.TaskID(rune('A' + p))
 				task := model.Task{ID: id + model.TaskID(rune(i)), JobID: "j1"}
-				if err := s.EnqueueTasks([]model.Task{task}); err != nil {
-					t.Errorf("EnqueueTasks() = %v, want nil", err)
+				if err := s.EnqueueTask(cell, task); err != nil {
+					t.Errorf("EnqueueTask() = %v, want nil", err)
 				}
 			}
 		}(p)
@@ -362,7 +416,7 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 		go func() {
 			defer consumers.Done()
 			for {
-				_, ok, err := s.DequeueTask()
+				_, ok, err := s.DequeueTask(cell)
 				if err != nil {
 					t.Errorf("DequeueTask() = %v, want nil", err)
 					return
@@ -381,7 +435,7 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 	if drained != total {
 		t.Fatalf("drained %d tasks, want %d", drained, total)
 	}
-	if _, ok, _ := s.DequeueTask(); ok {
+	if _, ok, _ := s.DequeueTask(cell); ok {
 		t.Fatalf("queue not empty after draining all tasks")
 	}
 }

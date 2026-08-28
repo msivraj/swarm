@@ -70,8 +70,14 @@ func (s *Server) mitosisLoop() {
 	}
 }
 
-// mitosisOnce reads a registry snapshot, calls mitosis.Decide, and executes
-// every returned command.
+// mitosisOnce reads a registry snapshot, calls mitosis.Decide, executes
+// every returned command, and then drains the ingress pending buffer: a
+// split or merge can change which cells exist and how much free capacity
+// each has, so a task placement.Place could not previously assign may now
+// fit. This is also the P1 "dedicated tick" (issue #43) that periodically
+// retries pending tasks even when no JoinAgent/SubmitJob call happens to
+// trigger a drain — driven by the same injected clock/ticker as the rest of
+// this loop, so it stays deterministic and I/O-free beyond the store call.
 func (s *Server) mitosisOnce() {
 	s.mu.Lock()
 	snapshot := registry.Snapshot(s.store.Registry())
@@ -90,6 +96,15 @@ func (s *Server) mitosisOnce() {
 			s.executeMerge(cmd.Cell, cmd.Other, now)
 		}
 	}
+
+	s.mu.Lock()
+	// drainPendingLocked's only error comes from store.EnqueueTask, which
+	// only ever fails on an empty TaskID — impossible here, since every
+	// pending task was already admitted (and so ID-validated) by SubmitJob.
+	// There is no RPC caller to report an error to from a background loop,
+	// so this mirrors applyRegistryEventLocked's handling of SetRegistry.
+	_ = s.drainPendingLocked()
+	s.mu.Unlock()
 }
 
 // executeSplit carries out a mitosis.Split command: it forms two new cells,
