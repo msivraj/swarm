@@ -9,6 +9,10 @@
 // This is the P2 "barrier spike" (issue #56): only the pure step. Checkpoint
 // (de)serialization and the leader/Raft shell that hosts this driver are
 // separate, later P2 tickets.
+//
+// Issue #59 productionizes the spike with a runtime minimum-membership floor
+// (State.MinMembers): the core never all-reduces a sub-floor fraction of its
+// members. See step's doc comment, decisions G and H.
 package barrier
 
 import "github.com/msivraj/swarm/internal/model"
@@ -29,6 +33,15 @@ type State struct {
 	Members        []WorkerID          // the barrier's membership for this step
 	Partials       map[WorkerID][]byte // per-worker Done payloads collected for Step
 	LastCheckpoint Checkpoint          // most recent checkpoint to roll back to
+	// MinMembers is the runtime membership floor (issue #59): the step that
+	// would otherwise complete only does so if the surviving membership is
+	// >= MinMembers. 0 means no floor — reproduces the spike's behavior
+	// exactly (decision G).
+	MinMembers int
+	// Failed marks a terminal give-up (decision H): once true the barrier
+	// has stopped making progress and the shell reports it as Failed. The
+	// checkpoint (LastCheckpoint) is left untouched.
+	Failed bool
 }
 
 // EventKind tags Event's sum type.
@@ -47,9 +60,13 @@ const (
 	Lost
 	// Restored{checkpoint} — the shell reloaded a checkpoint.
 	Restored
+	// GiveUp — an optional give-up timeout fired (issue #59): the shell has
+	// decided a stalled-under-floor barrier will never refill and gives up.
+	GiveUp
 )
 
-// Event is the sum type folded by step: Done | Deadline | Lost | Restored.
+// Event is the sum type folded by step: Done | Deadline | Lost | Restored |
+// GiveUp.
 type Event struct {
 	Kind    EventKind
 	Worker  WorkerID   // Done, Lost
@@ -75,8 +92,21 @@ const (
 	CheckpointOp
 	// Evict{worker} — drop a straggler or a lost member from membership.
 	Evict
-	// Rollback{ckpt} — reload the last checkpoint after a member is lost.
+	// Rollback{ckpt} — reload the last checkpoint after a member is lost, or
+	// after the survivors of an eviction/completion point fall under
+	// MinMembers (issue #59).
 	Rollback
+	// Stall{have, need} — the step would otherwise complete but the
+	// surviving membership is under MinMembers: parked at the last
+	// checkpoint. The shell surfaces a "stalled: have/need" status, releases
+	// the gang's reservation and requeues it, and retries to refill
+	// (cross-region if needed). Carries Have = surviving member count,
+	// Need = MinMembers.
+	Stall
+	// Fail{ckpt} — a give-up timeout fired on a stalled barrier. Terminal:
+	// the checkpoint is preserved (not deleted), the shell reports a clean
+	// Failed.
+	Fail
 )
 
 // Command is a description of an effect the shell will execute. Cores return
@@ -86,13 +116,16 @@ type Command struct {
 	Partials map[WorkerID][]byte // AllReduce
 	Step     int                 // Release (step to advance to), CheckpointOp (step snapshotted)
 	Worker   WorkerID            // Evict
-	Ckpt     Checkpoint          // Rollback
+	Ckpt     Checkpoint          // Rollback, Fail
+	Have     int                 // Stall — surviving member count
+	Need     int                 // Stall — MinMembers
 }
 
 // step folds one event into new state and the commands the shell must run.
 // Pure: no I/O, no clock read — now is supplied by the caller as data.
 //
-// Resolved ordering decisions (issue #56 notes, flagged for auditor + human):
+// Resolved ordering decisions (issue #56 notes, flagged for auditor + human;
+// G and H added by issue #59):
 //
 //   - A. Checkpoint-step ordering: when the completing step is also a
 //     cadence step, the order is AllReduce -> Checkpoint{N} -> Release{N+1}
@@ -106,11 +139,27 @@ type Command struct {
 //     otherwise never come.
 //   - D. Empty/fully-evicted membership emits no Release (and, for an empty
 //     Members to start with, no command at all) — a dead cell has no
-//     partials to reduce and nothing to release to.
+//     partials to reduce and nothing to release to. This only applies when
+//     MinMembers==0; with a floor configured, falling to zero survivors is
+//     "under floor" like any other shortfall (decision G).
 //   - E. Lost with no checkpoint yet rolls back to the zero Checkpoint
 //     (step 0 / genesis).
 //   - F. Step 0 checkpoints under the literal Step%K==0 rule (spike
 //     default).
+//   - G. MinMembers floor: at every point a step would otherwise complete
+//     (the all-Done path and the Deadline-with-survivors path), the core
+//     checks survivors against MinMembers first. survivors >= MinMembers (or
+//     MinMembers <= 0, meaning "no floor") completes as usual. Under the
+//     floor, the core never all-reduces the sub-floor fraction: it emits
+//     Rollback{LastCheckpoint} + Stall{have, need} instead, and parks —
+//     Step resets to LastCheckpoint.Step, Partials clears, Members holds the
+//     current survivors (the shell re-adds refilled members later; ordinary
+//     Done events then drive completion from the checkpoint once the floor
+//     is met again — no special resume command is needed here).
+//   - H. GiveUp is a give-up timeout: it always emits a single
+//     Fail{LastCheckpoint} and marks the state terminal (Failed=true),
+//     leaving LastCheckpoint untouched — the checkpoint is preserved, not
+//     deleted.
 func step(s State, ev Event, now model.Instant) (State, []Command) {
 	switch ev.Kind {
 	case Done:
@@ -121,6 +170,8 @@ func step(s State, ev Event, now model.Instant) (State, []Command) {
 		return stepLost(s, ev.Worker)
 	case Restored:
 		return stepRestored(s, ev.Ckpt)
+	case GiveUp:
+		return stepGiveUp(s)
 	default:
 		// Unknown EventKind: no-op rather than panic — a pure core must
 		// never crash on unexpected input.
@@ -138,7 +189,8 @@ func Step(s State, ev Event, now model.Instant) (State, []Command) {
 // ignored; a duplicate Done for a member already recorded this step
 // overwrites its partial and, since the member already counted toward
 // completion, emits nothing new. When every current member has reported,
-// the step completes (rule B).
+// the step completes — or, under the MinMembers floor, stalls (rule B,
+// decision G).
 func stepDone(s State, w WorkerID, partial []byte) (State, []Command) {
 	if !isMember(s.Members, w) {
 		return s, nil
@@ -152,15 +204,18 @@ func stepDone(s State, w WorkerID, partial []byte) (State, []Command) {
 	if !allDone(s.Members, partials) {
 		return next, nil
 	}
-	return completeStep(next, partials)
+	return completeOrStall(next, partials)
 }
 
 // stepDeadline folds a Deadline event: it evicts every member that has not
 // reported Done for Step (decision C). If evicting the stragglers leaves at
 // least one survivor, those survivors are — by construction — all Done, so
-// the same event also completes the step. If no survivors remain, only the
-// Evicts are emitted (decision D): a fully evicted cell has no partials to
-// reduce and nothing to release.
+// the same event also drives completion (or a floor stall, decision G) for
+// them. If no survivors remain: with no floor configured (MinMembers==0)
+// only the Evicts are emitted (decision D) — a fully evicted cell has no
+// partials to reduce and nothing to release to; with a floor configured,
+// zero survivors is under floor like any other shortfall, so Rollback +
+// Stall are emitted too.
 func stepDeadline(s State) (State, []Command) {
 	var stragglers, survivors []WorkerID
 	for _, w := range s.Members {
@@ -181,6 +236,10 @@ func stepDeadline(s State) (State, []Command) {
 
 	if len(survivors) == 0 {
 		next.Partials = nil
+		if s.MinMembers > 0 {
+			stalled, stallCmds := stall(next)
+			return stalled, append(cmds, stallCmds...)
+		}
 		return next, cmds
 	}
 
@@ -188,7 +247,7 @@ func stepDeadline(s State) (State, []Command) {
 	for _, w := range survivors {
 		survivorPartials[w] = s.Partials[w]
 	}
-	completed, completeCmds := completeStep(next, survivorPartials)
+	completed, completeCmds := completeOrStall(next, survivorPartials)
 	return completed, append(cmds, completeCmds...)
 }
 
@@ -204,6 +263,7 @@ func stepLost(s State, w WorkerID) (State, []Command) {
 		Members:        removeWorker(s.Members, w),
 		Partials:       nil,
 		LastCheckpoint: ckpt,
+		MinMembers:     s.MinMembers,
 	}
 	return next, []Command{{Op: Rollback, Ckpt: ckpt}}
 }
@@ -219,6 +279,45 @@ func stepRestored(s State, ckpt Checkpoint) (State, []Command) {
 	next.LastCheckpoint = ckpt
 	next.Partials = nil
 	return next, nil
+}
+
+// stepGiveUp folds a GiveUp event (decision H): a give-up timeout fired on a
+// (typically stalled) barrier. It always emits a single Fail{LastCheckpoint}
+// and marks the state terminal — LastCheckpoint is left untouched, so the
+// checkpoint is preserved rather than deleted.
+func stepGiveUp(s State) (State, []Command) {
+	next := s
+	next.Failed = true
+	return next, []Command{{Op: Fail, Ckpt: s.LastCheckpoint}}
+}
+
+// completeOrStall is the single gate (decision G) through which every
+// would-be step completion passes: s.Members already holds the surviving
+// membership for the step that just went fully Done, and partials holds
+// their reported payloads. If MinMembers is configured (>0) and the
+// survivors fall short of it, the step does not complete — it stalls
+// (Rollback + Stall) instead of all-reducing a sub-floor fraction.
+// MinMembers<=0 (no floor) always completes, reproducing the spike exactly.
+func completeOrStall(s State, partials map[WorkerID][]byte) (State, []Command) {
+	if s.MinMembers > 0 && len(s.Members) < s.MinMembers {
+		return stall(s)
+	}
+	return completeStep(s, partials)
+}
+
+// stall parks s under the MinMembers floor: Step resets to LastCheckpoint's
+// step, Partials clears, and Members is left as the current survivors (the
+// shell re-adds refilled members later). Emits Rollback{LastCheckpoint} then
+// Stall{have, need}.
+func stall(s State) (State, []Command) {
+	ckpt := s.LastCheckpoint
+	next := s
+	next.Step = ckpt.Step
+	next.Partials = nil
+	return next, []Command{
+		{Op: Rollback, Ckpt: ckpt},
+		{Op: Stall, Have: len(s.Members), Need: s.MinMembers},
+	}
 }
 
 // completeStep emits the step-completion commands for s's current Step given

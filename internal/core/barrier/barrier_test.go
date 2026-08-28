@@ -192,6 +192,95 @@ func TestStep(t *testing.T) {
 				{Op: Release, Step: 1},
 			},
 		},
+
+		// -- issue #59: MinMembers floor -------------------------------
+
+		{
+			name: "the completing Done under the floor stalls: Rollback + Stall, no AllReduce",
+			s: State{Step: 3, K: 2, Members: members("a", "b"),
+				Partials: partials("a", "pa"), LastCheckpoint: Checkpoint{Step: 2},
+				MinMembers: 3},
+			ev: Event{Kind: Done, Worker: "b", Partial: []byte("pb")},
+			wantS: State{Step: 2, K: 2, Members: members("a", "b"),
+				Partials: nil, LastCheckpoint: Checkpoint{Step: 2}, MinMembers: 3},
+			wantCmds: []Command{
+				{Op: Rollback, Ckpt: Checkpoint{Step: 2}},
+				{Op: Stall, Have: 2, Need: 3},
+			},
+		},
+		{
+			name: "the completing Done at exactly the floor completes normally",
+			s: State{Step: 0, K: 0, Members: members("a", "b"),
+				Partials: partials("a", "pa"), MinMembers: 2},
+			ev: Event{Kind: Done, Worker: "b", Partial: []byte("pb")},
+			wantS: State{Step: 1, K: 0, Members: members("a", "b"),
+				Partials: nil, MinMembers: 2},
+			wantCmds: []Command{
+				{Op: AllReduce, Partials: partials("a", "pa", "b", "pb")},
+				{Op: Release, Step: 1},
+			},
+		},
+		{
+			name: "Deadline evicting stragglers to below the floor: Evicts + Rollback + Stall, never AllReduce",
+			s: State{Step: 5, K: 0, Members: members("a", "b", "c"),
+				Partials: partials("a", "pa"), LastCheckpoint: Checkpoint{Step: 3},
+				MinMembers: 2},
+			ev: Event{Kind: Deadline},
+			wantS: State{Step: 3, K: 0, Members: members("a"),
+				Partials: nil, LastCheckpoint: Checkpoint{Step: 3}, MinMembers: 2},
+			wantCmds: []Command{
+				{Op: Evict, Worker: "b"},
+				{Op: Evict, Worker: "c"},
+				{Op: Rollback, Ckpt: Checkpoint{Step: 3}},
+				{Op: Stall, Have: 1, Need: 2},
+			},
+		},
+		{
+			name: "Deadline evicting stragglers to exactly the floor completes normally",
+			s: State{Step: 5, K: 0, Members: members("a", "b", "c"),
+				Partials: partials("a", "pa", "b", "pb"), MinMembers: 2},
+			ev: Event{Kind: Deadline},
+			wantS: State{Step: 6, K: 0, Members: members("a", "b"),
+				Partials: nil, MinMembers: 2},
+			wantCmds: []Command{
+				{Op: Evict, Worker: "c"},
+				{Op: AllReduce, Partials: partials("a", "pa", "b", "pb")},
+				{Op: Release, Step: 6},
+			},
+		},
+		{
+			name: "Deadline to zero survivors under a configured floor also stalls (extends decision D)",
+			s: State{Step: 5, K: 0, Members: members("a", "b"),
+				LastCheckpoint: Checkpoint{Step: 1}, MinMembers: 2},
+			ev: Event{Kind: Deadline},
+			wantS: State{Step: 1, K: 0, Members: nil,
+				Partials: nil, LastCheckpoint: Checkpoint{Step: 1}, MinMembers: 2},
+			wantCmds: []Command{
+				{Op: Evict, Worker: "a"},
+				{Op: Evict, Worker: "b"},
+				{Op: Rollback, Ckpt: Checkpoint{Step: 1}},
+				{Op: Stall, Have: 0, Need: 2},
+			},
+		},
+		{
+			name: "GiveUp emits a single Fail{LastCheckpoint} and marks the state terminal",
+			s: State{Step: 5, K: 2, Members: members("a"),
+				Partials: partials("a", "pa"), LastCheckpoint: Checkpoint{Step: 4},
+				MinMembers: 3},
+			ev: Event{Kind: GiveUp},
+			wantS: State{Step: 5, K: 2, Members: members("a"),
+				Partials: partials("a", "pa"), LastCheckpoint: Checkpoint{Step: 4},
+				MinMembers: 3, Failed: true},
+			wantCmds: []Command{{Op: Fail, Ckpt: Checkpoint{Step: 4}}},
+		},
+		{
+			name: "GiveUp with no checkpoint yet preserves the zero checkpoint",
+			s:    State{Step: 0, K: 0, Members: members("a", "b")},
+			ev:   Event{Kind: GiveUp},
+			wantS: State{Step: 0, K: 0, Members: members("a", "b"),
+				Failed: true},
+			wantCmds: []Command{{Op: Fail, Ckpt: Checkpoint{}}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -436,6 +525,162 @@ func TestStepOrderTolerantWithinAStep(t *testing.T) {
 		}
 		if !reflect.DeepEqual(gotDupCmds, wantCmds) {
 			t.Fatalf("order+dup %+v: cmds = %+v, want %+v", withDup, gotDupCmds, wantCmds)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue #59 — MinMembers floor: property tests
+//
+// "A sub-floor fraction can never be all-reduced." These enumerate every
+// possible survivor split (via doneSubsets, deterministically — no
+// math/rand) and every floor from 0 (no floor) up past the full membership
+// size, on both paths that can complete a step: the all-Done (stepDone) path
+// and the Deadline-eviction (stepDeadline) path.
+// -----------------------------------------------------------------------
+
+// hasOp reports whether cmds contains a command with the given op.
+func hasOp(cmds []Command, op CmdOp) bool {
+	for _, c := range cmds {
+		if c.Op == op {
+			return true
+		}
+	}
+	return false
+}
+
+func TestFloorPropertyDeadlineNeverAllReducesBelowFloor(t *testing.T) {
+	all := members("a", "b", "c", "d")
+
+	for minMembers := 0; minMembers <= len(all)+1; minMembers++ {
+		for _, done := range doneSubsets(all) {
+			p := map[WorkerID][]byte{}
+			for _, w := range done {
+				p[w] = []byte("payload-" + string(w))
+			}
+
+			s := State{Step: 9, K: 1000, Members: append([]WorkerID{}, all...),
+				Partials: p, MinMembers: minMembers, LastCheckpoint: Checkpoint{Step: 3}}
+			_, cmds := step(s, Event{Kind: Deadline}, 0)
+
+			survivors := len(done)
+			underFloor := minMembers > 0 && survivors < minMembers
+
+			if underFloor && hasOp(cmds, AllReduce) {
+				t.Fatalf("MinMembers=%d survivors=%d (done=%+v): AllReduce emitted below the floor: %+v",
+					minMembers, survivors, done, cmds)
+			}
+			if underFloor && !hasOp(cmds, Rollback) {
+				t.Fatalf("MinMembers=%d survivors=%d (done=%+v): no Rollback emitted below the floor: %+v",
+					minMembers, survivors, done, cmds)
+			}
+			if underFloor && !hasOp(cmds, Stall) {
+				t.Fatalf("MinMembers=%d survivors=%d (done=%+v): no Stall emitted below the floor: %+v",
+					minMembers, survivors, done, cmds)
+			}
+
+			// At or above the floor with at least one survivor, the step
+			// always completes (AllReduce present). Zero survivors with no
+			// floor configured is decision D (no command), not a floor case.
+			atOrAboveWithSurvivors := !underFloor && survivors > 0
+			if atOrAboveWithSurvivors && !hasOp(cmds, AllReduce) {
+				t.Fatalf("MinMembers=%d survivors=%d (done=%+v): step did not complete at/above the floor: %+v",
+					minMembers, survivors, done, cmds)
+			}
+		}
+	}
+}
+
+func TestFloorPropertyDoneNeverAllReducesBelowFloor(t *testing.T) {
+	all := members("a", "b", "c", "d", "e")
+
+	for minMembers := 0; minMembers <= len(all)+1; minMembers++ {
+		for n := 1; n <= len(all); n++ {
+			membership := append([]WorkerID{}, all[:n]...)
+
+			p := map[WorkerID][]byte{}
+			for _, w := range membership[:n-1] {
+				p[w] = []byte("payload-" + string(w))
+			}
+			last := membership[n-1]
+
+			s := State{Step: 2, K: 1000, Members: membership, Partials: p,
+				MinMembers: minMembers, LastCheckpoint: Checkpoint{Step: 1}}
+			_, cmds := step(s, Event{Kind: Done, Worker: last, Partial: []byte("p-last")}, 0)
+
+			underFloor := minMembers > 0 && n < minMembers
+
+			if underFloor {
+				if hasOp(cmds, AllReduce) {
+					t.Fatalf("MinMembers=%d n=%d: AllReduce emitted below the floor: %+v", minMembers, n, cmds)
+				}
+				if !hasOp(cmds, Rollback) || !hasOp(cmds, Stall) {
+					t.Fatalf("MinMembers=%d n=%d: missing Rollback/Stall below the floor: %+v", minMembers, n, cmds)
+				}
+				continue
+			}
+			if !hasOp(cmds, AllReduce) {
+				t.Fatalf("MinMembers=%d n=%d: step did not complete at/above the floor: %+v", minMembers, n, cmds)
+			}
+		}
+	}
+}
+
+// TestFloorZeroReproducesSpikeExactly is the regression guard from the
+// ticket: MinMembers==0 must behave exactly like the merged spike (which had
+// no floor field at all) across every survivor split at Deadline.
+func TestFloorZeroReproducesSpikeExactly(t *testing.T) {
+	all := members("a", "b", "c", "d")
+
+	for _, done := range doneSubsets(all) {
+		p := map[WorkerID][]byte{}
+		for _, w := range done {
+			p[w] = []byte("payload-" + string(w))
+		}
+
+		withFloor := State{Step: 9, K: 1000, Members: append([]WorkerID{}, all...), Partials: p, MinMembers: 0}
+		withoutFloorField := State{Step: 9, K: 1000, Members: append([]WorkerID{}, all...), Partials: p}
+
+		gotS, gotCmds := step(withFloor, Event{Kind: Deadline}, 0)
+		wantS, wantCmds := step(withoutFloorField, Event{Kind: Deadline}, 0)
+
+		if !reflect.DeepEqual(gotS, wantS) || !reflect.DeepEqual(gotCmds, wantCmds) {
+			t.Fatalf("done=%+v: MinMembers=0 diverged from the zero-value State: state=%+v cmds=%+v, want state=%+v cmds=%+v",
+				done, gotS, gotCmds, wantS, wantCmds)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue #59 — determinism under the new Stall/GiveUp branches
+// -----------------------------------------------------------------------
+
+func TestStepIsDeterministicUnderFloorStall(t *testing.T) {
+	s := State{Step: 5, K: 0, Members: members("a", "b", "c"),
+		Partials: partials("a", "pa"), LastCheckpoint: Checkpoint{Step: 3}, MinMembers: 2}
+	ev := Event{Kind: Deadline}
+
+	firstS, firstCmds := step(s, ev, model.Instant(11))
+	for i := 0; i < 100; i++ {
+		gotS, gotCmds := step(s, ev, model.Instant(11))
+		if !reflect.DeepEqual(gotS, firstS) || !reflect.DeepEqual(gotCmds, firstCmds) {
+			t.Fatalf("non-deterministic output on run %d: state=%+v cmds=%+v, want state=%+v cmds=%+v",
+				i, gotS, gotCmds, firstS, firstCmds)
+		}
+	}
+}
+
+func TestStepIsDeterministicUnderGiveUp(t *testing.T) {
+	s := State{Step: 5, K: 2, Members: members("a"),
+		Partials: partials("a", "pa"), LastCheckpoint: Checkpoint{Step: 4}, MinMembers: 3}
+	ev := Event{Kind: GiveUp}
+
+	firstS, firstCmds := step(s, ev, model.Instant(3))
+	for i := 0; i < 100; i++ {
+		gotS, gotCmds := step(s, ev, model.Instant(3))
+		if !reflect.DeepEqual(gotS, firstS) || !reflect.DeepEqual(gotCmds, firstCmds) {
+			t.Fatalf("non-deterministic output on run %d: state=%+v cmds=%+v, want state=%+v cmds=%+v",
+				i, gotS, gotCmds, firstS, firstCmds)
 		}
 	}
 }
