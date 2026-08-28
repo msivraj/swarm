@@ -34,6 +34,13 @@ type fakeControlPlane struct {
 	taskPulled        bool
 	failNextReport    bool
 	failAllReports    bool
+	// unreachable, when set, makes Ps fail — the identity-free probe RPC
+	// execDial uses to confirm a dial actually connected. It simulates an
+	// entire region being unreachable (used by the cross-region failover
+	// tests in failover_test.go), as opposed to failNextHeartbeat, which
+	// simulates a single dropped connection to an otherwise-healthy region.
+	unreachable bool
+	psCalls     int
 
 	joined   chan struct{}
 	reported chan reportedResult
@@ -57,6 +64,13 @@ func newFakeControlPlane() *fakeControlPlane {
 }
 
 func (f *fakeControlPlane) Ps(context.Context, *transport.PsRequest) (*transport.PsResponse, error) {
+	f.mu.Lock()
+	f.psCalls++
+	unreachable := f.unreachable
+	f.mu.Unlock()
+	if unreachable {
+		return nil, status.Error(codes.Unavailable, "simulated region unreachable")
+	}
 	return &transport.PsResponse{}, nil
 }
 
@@ -138,6 +152,24 @@ func (f *fakeControlPlane) joinCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.joinCalls
+}
+
+// setUnreachable toggles whether Ps (and therefore every probeDial) fails,
+// simulating this fake's whole region going down or recovering — the
+// scenario the cross-region failover tests in failover_test.go need, as
+// opposed to a single dropped connection.
+func (f *fakeControlPlane) setUnreachable(down bool) {
+	f.mu.Lock()
+	f.unreachable = down
+	f.mu.Unlock()
+}
+
+// psCallCount reports how many times Ps has been called, i.e. how many
+// times something has probed this fake, whether or not the probe succeeded.
+func (f *fakeControlPlane) psCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.psCalls
 }
 
 // startFakeControlPlane runs a real gRPC server backed by fakeControlPlane
