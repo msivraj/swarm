@@ -134,6 +134,10 @@ func (s *Server) executeSplit(cell model.CellID, now model.Instant) {
 	s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.CellUp, Cell: idB, Capacity: capB})
 	s.moveAgentsLocked(groupA, idA)
 	s.moveAgentsLocked(groupB, idB)
+	// cell's store queue does not migrate itself — drain whatever is still
+	// queued on it into the pending buffer before it is torn down, or those
+	// tasks would be orphaned (see migrateCellQueueLocked's doc).
+	_ = s.migrateCellQueueLocked(cell)
 	s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.CellDown, Cell: cell})
 
 	delete(s.cellAgents, cell)
@@ -163,6 +167,12 @@ func (s *Server) executeMerge(a, b model.CellID, now model.Instant) {
 	s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.CellUp, Cell: merged, Capacity: capA + capB})
 	s.moveAgentsLocked(agentsA, merged)
 	s.moveAgentsLocked(agentsB, merged)
+	// a and b's store queues do not migrate themselves — drain whatever is
+	// still queued on each into the pending buffer before either is torn
+	// down, or those tasks would be orphaned (see migrateCellQueueLocked's
+	// doc).
+	_ = s.migrateCellQueueLocked(a)
+	_ = s.migrateCellQueueLocked(b)
 	s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.CellDown, Cell: a})
 	s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.CellDown, Cell: b})
 
@@ -171,6 +181,35 @@ func (s *Server) executeMerge(a, b model.CellID, now model.Instant) {
 	delete(s.cooldowns, a)
 	delete(s.cooldowns, b)
 	s.cooldowns[merged] = now
+}
+
+// migrateCellQueueLocked drains every task still queued on cell (via
+// repeated store.DequeueTask) into the ingress pending buffer, in that
+// queue's own FIFO order. It exists because a cell's store queue does not
+// migrate itself when the cell is retired: executeSplit/executeMerge move
+// agent membership and CellDown the old cell, but a task already
+// EnqueueTask'd on that cell would otherwise be orphaned — no agent maps to
+// the defunct cell anymore, so PullTask can never reach it, and it was
+// never in s.pending, so no drain would ever re-place it either, hanging
+// the owning job forever.
+//
+// Callers must hold s.mu and must call this before the cell's CellDown
+// event (so the migrated tasks are already in s.pending in time for
+// mitosisOnce's own end-of-tick drainPendingLocked call to re-run
+// placement.Place over them, same mechanism already used for region-full
+// pending tasks — placement.Place itself is unmodified and this never
+// spills cross-region, only re-places locally onto the reshaped fleet).
+func (s *Server) migrateCellQueueLocked(cell model.CellID) error {
+	for {
+		t, ok, err := s.store.DequeueTask(cell)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		s.pending = append(s.pending, t)
+	}
 }
 
 // moveAgentsLocked folds an AgentJoined event for each agent into dest and

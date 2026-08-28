@@ -843,6 +843,120 @@ func TestAggregationCompletesOverPerCellQueues(t *testing.T) {
 	}
 }
 
+// TestMitosisMergeMigratesRetiredCellsQueuedTasks is a regression test for a
+// real task-loss bug the auditor caught: executeSplit/executeMerge move
+// agent membership and CellDown the retired cell(s), but never migrated
+// that cell's per-cell store queue. A task already EnqueueTask'd on a cell
+// that a merge (or split) retires had no agent mapped to it anymore (so
+// PullTask could never reach it) and was never added to s.pending (so no
+// drain would ever re-place it) — the owning job hung forever.
+//
+// This mirrors the auditor's exact repro: two agents, each the sole member
+// of its own cell, each cell holding one queued (not yet pulled) task, and
+// a mitosis merge under the default Target:4 threshold (both cells' size 1
+// is under Target, and their combined size 2 stays under Target too, so
+// mitosis.Decide's merge rule fires deterministically for this shape). It
+// asserts both tasks survive the merge, are still deliverable, and the job
+// still reaches Aggregate completion.
+func TestMitosisMergeMigratesRetiredCellsQueuedTasks(t *testing.T) {
+	clock := &testClock{}
+	cfg := twoCellConfig()
+	// Keep the background mitosis ticker from firing mid-test (it would
+	// otherwise race the test's own direct mitosisOnce call below); the
+	// merge decision itself still comes from the same core, cooldowns, and
+	// clock the background loop would use, just invoked deterministically
+	// instead of waited for over wall-clock time.
+	cfg.MitosisInterval = time.Hour
+	cfg.MitosisThresholds = mitosis.Thresholds{Target: 4, CooldownNS: 0}
+	client, srv, teardown := newTestServer(t, cfg, clock)
+	defer teardown()
+	ctx := context.Background()
+
+	// Two agents, two distinct cells (same shape as
+	// TestPerCellQueuesIsolateTasksByCell): each cell's size (1) is under
+	// Target (4), and their combined size (2) stays under Target too, so
+	// mitosis.Decide will merge them.
+	joinA := joinAgent(t, ctx, client, "agent-a", 1)
+	joinB := joinAgent(t, ctx, client, "agent-b", 2)
+	if joinA.GetCellId() == joinB.GetCellId() {
+		t.Fatalf("agent-a and agent-b landed on the same cell %s, want two distinct cells", joinA.GetCellId())
+	}
+
+	// One task lands on each cell — queued, not yet pulled by either agent —
+	// exactly the state a retiring cell's queue must not lose.
+	jobID := submitMonteCarlo(t, ctx, client, 2)
+
+	srv.mitosisOnce()
+
+	// The merge retired both original cells into one; confirm via Ps that no
+	// agent was lost across the reshape (mirrors TestMitosisSplitsOversizedCell).
+	psResp, err := client.Ps(ctx, &transport.PsRequest{})
+	if err != nil {
+		t.Fatalf("Ps: %v", err)
+	}
+	if psResp.GetCells() != 1 {
+		t.Fatalf("Ps after merge: Cells = %d, want 1 (agent-a's and agent-b's cells should have merged)", psResp.GetCells())
+	}
+	if psResp.GetMachines() != 2 {
+		t.Fatalf("Ps after merge: Machines = %d, want 2 (no agent lost across the merge)", psResp.GetMachines())
+	}
+
+	// The bug: both cells' queued tasks must survive the merge and still be
+	// deliverable — the merge's own end-of-tick drain (mitosisOnce ->
+	// drainPendingLocked) must have re-placed them onto the merged cell.
+	// Both agents now share that one cell, so either PullTask call may
+	// surface either task; what must hold is that both are still there and
+	// neither was dropped or delivered twice.
+	var pulled []*transport.Task
+	pulled = append(pulled, drainAllTasks(t, ctx, client, "agent-a")...)
+	pulled = append(pulled, drainAllTasks(t, ctx, client, "agent-b")...)
+	if len(pulled) != 2 {
+		t.Fatalf("pulled %d tasks after the merge, want 2 — a merge must not orphan a retired cell's queued tasks", len(pulled))
+	}
+	if pulled[0].GetId() == pulled[1].GetId() {
+		t.Fatalf("the same task %s was delivered twice after the merge", pulled[0].GetId())
+	}
+	for _, task := range pulled {
+		if task.GetJobId() != jobID {
+			t.Fatalf("pulled task %s has JobId %s, want %s", task.GetId(), task.GetJobId(), jobID)
+		}
+	}
+
+	// The job must still reach completion — proving the merge does not hang
+	// it forever, which is exactly what the orphaned-queue bug did.
+	report := func(taskID string, count int64, sum, sumSq float64) {
+		t.Helper()
+		resp, err := client.ReportResult(ctx, &transport.ReportResultRequest{
+			TaskId: taskID,
+			Output: encodeMCResult(count, sum, sumSq),
+			Ok:     true,
+		})
+		if err != nil {
+			t.Fatalf("ReportResult(%s): %v", taskID, err)
+		}
+		if !resp.GetAccepted() {
+			t.Fatalf("ReportResult(%s) not accepted", taskID)
+		}
+	}
+	report(pulled[0].GetId(), 1, 10, 100)
+	report(pulled[1].GetId(), 1, 20, 400)
+
+	statusResp, err := client.JobStatus(ctx, &transport.JobStatusRequest{JobId: jobID})
+	if err != nil {
+		t.Fatalf("JobStatus: %v", err)
+	}
+	if !statusResp.GetDone() {
+		t.Fatalf("JobStatus: Done = false, want true — the job must complete despite the mitosis merge")
+	}
+	gotCount, gotSum, _, _ := decodeMCAggregate(statusResp.GetAggregate())
+	if gotCount != 2 {
+		t.Fatalf("aggregate Count = %d, want 2", gotCount)
+	}
+	if gotSum != 30 {
+		t.Fatalf("aggregate Sum = %v, want 30", gotSum)
+	}
+}
+
 // waitFor polls cond every 5ms for up to 2s (real wall-clock time, bounding
 // how long a background loop's wall-clock ticker takes to fire and observe
 // the injected testClock's already-advanced value) and fails the test if
