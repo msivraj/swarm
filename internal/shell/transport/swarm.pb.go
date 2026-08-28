@@ -73,6 +73,57 @@ func (Coupling) EnumDescriptor() ([]byte, []int) {
 	return file_swarm_proto_rawDescGZIP(), []int{0}
 }
 
+// Health mirrors model.Health ordinals verbatim (Healthy=0, Degraded=1,
+// Unreachable=2).
+type Health int32
+
+const (
+	Health_HEALTH_HEALTHY     Health = 0
+	Health_HEALTH_DEGRADED    Health = 1
+	Health_HEALTH_UNREACHABLE Health = 2
+)
+
+// Enum value maps for Health.
+var (
+	Health_name = map[int32]string{
+		0: "HEALTH_HEALTHY",
+		1: "HEALTH_DEGRADED",
+		2: "HEALTH_UNREACHABLE",
+	}
+	Health_value = map[string]int32{
+		"HEALTH_HEALTHY":     0,
+		"HEALTH_DEGRADED":    1,
+		"HEALTH_UNREACHABLE": 2,
+	}
+)
+
+func (x Health) Enum() *Health {
+	p := new(Health)
+	*p = x
+	return p
+}
+
+func (x Health) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Health) Descriptor() protoreflect.EnumDescriptor {
+	return file_swarm_proto_enumTypes[1].Descriptor()
+}
+
+func (Health) Type() protoreflect.EnumType {
+	return &file_swarm_proto_enumTypes[1]
+}
+
+func (x Health) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Health.Descriptor instead.
+func (Health) EnumDescriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{1}
+}
+
 type SubmitJobRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Template      string                 `protobuf:"bytes,1,opt,name=template,proto3" json:"template,omitempty"`
@@ -845,6 +896,686 @@ func (x *JobStatusResponse) GetAggregate() []byte {
 	return nil
 }
 
+// JobSpec is a job's decomposable spec, carried on cross-region dispatch so a
+// region that did not admit the job can still route/aggregate its tasks.
+type JobSpec struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Template      string                 `protobuf:"bytes,2,opt,name=template,proto3" json:"template,omitempty"`
+	Coupling      Coupling               `protobuf:"varint,3,opt,name=coupling,proto3,enum=swarm.v1.Coupling" json:"coupling,omitempty"`
+	Params        map[string]string      `protobuf:"bytes,4,rep,name=params,proto3" json:"params,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JobSpec) Reset() {
+	*x = JobSpec{}
+	mi := &file_swarm_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JobSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JobSpec) ProtoMessage() {}
+
+func (x *JobSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JobSpec.ProtoReflect.Descriptor instead.
+func (*JobSpec) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *JobSpec) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *JobSpec) GetTemplate() string {
+	if x != nil {
+		return x.Template
+	}
+	return ""
+}
+
+func (x *JobSpec) GetCoupling() Coupling {
+	if x != nil {
+		return x.Coupling
+	}
+	return Coupling_COUPLING_INDEPENDENT
+}
+
+func (x *JobSpec) GetParams() map[string]string {
+	if x != nil {
+		return x.Params
+	}
+	return nil
+}
+
+// RegionalSummary is what a region publishes upward (mirrors
+// routing.RegionalSummary); `at` is the shell-stamped Instant (int64 ns). A
+// periodic PublishSummary IS the region heartbeat — a region that stops
+// publishing goes stale and is downgraded via routing.Diverged.
+type RegionalSummary struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Region        string                 `protobuf:"bytes,1,opt,name=region,proto3" json:"region,omitempty"`
+	Free          int32                  `protobuf:"varint,2,opt,name=free,proto3" json:"free,omitempty"`
+	Cells         int32                  `protobuf:"varint,3,opt,name=cells,proto3" json:"cells,omitempty"`
+	Health        Health                 `protobuf:"varint,4,opt,name=health,proto3,enum=swarm.v1.Health" json:"health,omitempty"`
+	At            int64                  `protobuf:"varint,5,opt,name=at,proto3" json:"at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegionalSummary) Reset() {
+	*x = RegionalSummary{}
+	mi := &file_swarm_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegionalSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegionalSummary) ProtoMessage() {}
+
+func (x *RegionalSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegionalSummary.ProtoReflect.Descriptor instead.
+func (*RegionalSummary) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *RegionalSummary) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *RegionalSummary) GetFree() int32 {
+	if x != nil {
+		return x.Free
+	}
+	return 0
+}
+
+func (x *RegionalSummary) GetCells() int32 {
+	if x != nil {
+		return x.Cells
+	}
+	return 0
+}
+
+func (x *RegionalSummary) GetHealth() Health {
+	if x != nil {
+		return x.Health
+	}
+	return Health_HEALTH_HEALTHY
+}
+
+func (x *RegionalSummary) GetAt() int64 {
+	if x != nil {
+		return x.At
+	}
+	return 0
+}
+
+// RegionView is one region as the global layer sees it (mirrors model.RegionView).
+type RegionView struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Free          int32                  `protobuf:"varint,2,opt,name=free,proto3" json:"free,omitempty"`
+	Cells         int32                  `protobuf:"varint,3,opt,name=cells,proto3" json:"cells,omitempty"`
+	Health        Health                 `protobuf:"varint,4,opt,name=health,proto3,enum=swarm.v1.Health" json:"health,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegionView) Reset() {
+	*x = RegionView{}
+	mi := &file_swarm_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegionView) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegionView) ProtoMessage() {}
+
+func (x *RegionView) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegionView.ProtoReflect.Descriptor instead.
+func (*RegionView) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *RegionView) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *RegionView) GetFree() int32 {
+	if x != nil {
+		return x.Free
+	}
+	return 0
+}
+
+func (x *RegionView) GetCells() int32 {
+	if x != nil {
+		return x.Cells
+	}
+	return 0
+}
+
+func (x *RegionView) GetHealth() Health {
+	if x != nil {
+		return x.Health
+	}
+	return Health_HEALTH_HEALTHY
+}
+
+type PublishSummaryRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Summary       *RegionalSummary       `protobuf:"bytes,1,opt,name=summary,proto3" json:"summary,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PublishSummaryRequest) Reset() {
+	*x = PublishSummaryRequest{}
+	mi := &file_swarm_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PublishSummaryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PublishSummaryRequest) ProtoMessage() {}
+
+func (x *PublishSummaryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PublishSummaryRequest.ProtoReflect.Descriptor instead.
+func (*PublishSummaryRequest) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *PublishSummaryRequest) GetSummary() *RegionalSummary {
+	if x != nil {
+		return x.Summary
+	}
+	return nil
+}
+
+type PublishSummaryResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PublishSummaryResponse) Reset() {
+	*x = PublishSummaryResponse{}
+	mi := &file_swarm_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PublishSummaryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PublishSummaryResponse) ProtoMessage() {}
+
+func (x *PublishSummaryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PublishSummaryResponse.ProtoReflect.Descriptor instead.
+func (*PublishSummaryResponse) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *PublishSummaryResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+type GlobalViewRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GlobalViewRequest) Reset() {
+	*x = GlobalViewRequest{}
+	mi := &file_swarm_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GlobalViewRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GlobalViewRequest) ProtoMessage() {}
+
+func (x *GlobalViewRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GlobalViewRequest.ProtoReflect.Descriptor instead.
+func (*GlobalViewRequest) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{20}
+}
+
+type GlobalViewResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Regions       []*RegionView          `protobuf:"bytes,1,rep,name=regions,proto3" json:"regions,omitempty"`   // merged, health as of the reply
+	Diverged      []string               `protobuf:"bytes,2,rep,name=diverged,proto3" json:"diverged,omitempty"` // RegionIDs routing.Diverged flagged stale
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GlobalViewResponse) Reset() {
+	*x = GlobalViewResponse{}
+	mi := &file_swarm_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GlobalViewResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GlobalViewResponse) ProtoMessage() {}
+
+func (x *GlobalViewResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GlobalViewResponse.ProtoReflect.Descriptor instead.
+func (*GlobalViewResponse) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *GlobalViewResponse) GetRegions() []*RegionView {
+	if x != nil {
+		return x.Regions
+	}
+	return nil
+}
+
+func (x *GlobalViewResponse) GetDiverged() []string {
+	if x != nil {
+		return x.Diverged
+	}
+	return nil
+}
+
+// DispatchTasksRequest carries global->region (spread) and region->region
+// (spill) task delivery. `result_sink` is the dial address that owns roll-up
+// for this job: spread -> the global layer (region reports a PARTIAL via
+// ReportPartial); spill -> the ORIGIN region (peer reports the raw result via
+// the P0 ControlPlane.ReportResult); empty/self -> aggregate locally.
+type DispatchTasksRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Job           *JobSpec               `protobuf:"bytes,1,opt,name=job,proto3" json:"job,omitempty"`
+	Tasks         []*Task                `protobuf:"bytes,2,rep,name=tasks,proto3" json:"tasks,omitempty"`
+	ResultSink    string                 `protobuf:"bytes,3,opt,name=result_sink,json=resultSink,proto3" json:"result_sink,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DispatchTasksRequest) Reset() {
+	*x = DispatchTasksRequest{}
+	mi := &file_swarm_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DispatchTasksRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DispatchTasksRequest) ProtoMessage() {}
+
+func (x *DispatchTasksRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DispatchTasksRequest.ProtoReflect.Descriptor instead.
+func (*DispatchTasksRequest) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *DispatchTasksRequest) GetJob() *JobSpec {
+	if x != nil {
+		return x.Job
+	}
+	return nil
+}
+
+func (x *DispatchTasksRequest) GetTasks() []*Task {
+	if x != nil {
+		return x.Tasks
+	}
+	return nil
+}
+
+func (x *DispatchTasksRequest) GetResultSink() string {
+	if x != nil {
+		return x.ResultSink
+	}
+	return ""
+}
+
+type DispatchTasksResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Accepted      bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DispatchTasksResponse) Reset() {
+	*x = DispatchTasksResponse{}
+	mi := &file_swarm_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DispatchTasksResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DispatchTasksResponse) ProtoMessage() {}
+
+func (x *DispatchTasksResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DispatchTasksResponse.ProtoReflect.Descriptor instead.
+func (*DispatchTasksResponse) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *DispatchTasksResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+func (x *DispatchTasksResponse) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// PartialAggregate is a job-level partial reported up the roll-up tree
+// (region -> global). `template` is carried because model.Aggregate has no
+// template tag and `value` is opaque template-encoded bytes — the receiver
+// needs it to call aggregate.Merge. `done` marks the sender's subtree complete.
+type PartialAggregate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Region        string                 `protobuf:"bytes,2,opt,name=region,proto3" json:"region,omitempty"` // reporting region (dedup / expected-set tracking)
+	Template      string                 `protobuf:"bytes,3,opt,name=template,proto3" json:"template,omitempty"`
+	Value         []byte                 `protobuf:"bytes,4,opt,name=value,proto3" json:"value,omitempty"` // model.Aggregate.Value
+	Done          bool                   `protobuf:"varint,5,opt,name=done,proto3" json:"done,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PartialAggregate) Reset() {
+	*x = PartialAggregate{}
+	mi := &file_swarm_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PartialAggregate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PartialAggregate) ProtoMessage() {}
+
+func (x *PartialAggregate) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PartialAggregate.ProtoReflect.Descriptor instead.
+func (*PartialAggregate) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *PartialAggregate) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *PartialAggregate) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *PartialAggregate) GetTemplate() string {
+	if x != nil {
+		return x.Template
+	}
+	return ""
+}
+
+func (x *PartialAggregate) GetValue() []byte {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *PartialAggregate) GetDone() bool {
+	if x != nil {
+		return x.Done
+	}
+	return false
+}
+
+type ReportPartialRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Partial       *PartialAggregate      `protobuf:"bytes,1,opt,name=partial,proto3" json:"partial,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportPartialRequest) Reset() {
+	*x = ReportPartialRequest{}
+	mi := &file_swarm_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportPartialRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportPartialRequest) ProtoMessage() {}
+
+func (x *ReportPartialRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportPartialRequest.ProtoReflect.Descriptor instead.
+func (*ReportPartialRequest) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *ReportPartialRequest) GetPartial() *PartialAggregate {
+	if x != nil {
+		return x.Partial
+	}
+	return nil
+}
+
+type ReportPartialResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportPartialResponse) Reset() {
+	*x = ReportPartialResponse{}
+	mi := &file_swarm_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportPartialResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportPartialResponse) ProtoMessage() {}
+
+func (x *ReportPartialResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportPartialResponse.ProtoReflect.Descriptor instead.
+func (*ReportPartialResponse) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ReportPartialResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
 var File_swarm_proto protoreflect.FileDescriptor
 
 const file_swarm_proto_rawDesc = "" +
@@ -897,12 +1628,62 @@ const file_swarm_proto_rawDesc = "" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\"E\n" +
 	"\x11JobStatusResponse\x12\x12\n" +
 	"\x04done\x18\x01 \x01(\bR\x04done\x12\x1c\n" +
-	"\taggregate\x18\x02 \x01(\fR\taggregate*m\n" +
+	"\taggregate\x18\x02 \x01(\fR\taggregate\"\xd7\x01\n" +
+	"\aJobSpec\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
+	"\btemplate\x18\x02 \x01(\tR\btemplate\x12.\n" +
+	"\bcoupling\x18\x03 \x01(\x0e2\x12.swarm.v1.CouplingR\bcoupling\x125\n" +
+	"\x06params\x18\x04 \x03(\v2\x1d.swarm.v1.JobSpec.ParamsEntryR\x06params\x1a9\n" +
+	"\vParamsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8d\x01\n" +
+	"\x0fRegionalSummary\x12\x16\n" +
+	"\x06region\x18\x01 \x01(\tR\x06region\x12\x12\n" +
+	"\x04free\x18\x02 \x01(\x05R\x04free\x12\x14\n" +
+	"\x05cells\x18\x03 \x01(\x05R\x05cells\x12(\n" +
+	"\x06health\x18\x04 \x01(\x0e2\x10.swarm.v1.HealthR\x06health\x12\x0e\n" +
+	"\x02at\x18\x05 \x01(\x03R\x02at\"p\n" +
+	"\n" +
+	"RegionView\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04free\x18\x02 \x01(\x05R\x04free\x12\x14\n" +
+	"\x05cells\x18\x03 \x01(\x05R\x05cells\x12(\n" +
+	"\x06health\x18\x04 \x01(\x0e2\x10.swarm.v1.HealthR\x06health\"L\n" +
+	"\x15PublishSummaryRequest\x123\n" +
+	"\asummary\x18\x01 \x01(\v2\x19.swarm.v1.RegionalSummaryR\asummary\"(\n" +
+	"\x16PublishSummaryResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"\x13\n" +
+	"\x11GlobalViewRequest\"`\n" +
+	"\x12GlobalViewResponse\x12.\n" +
+	"\aregions\x18\x01 \x03(\v2\x14.swarm.v1.RegionViewR\aregions\x12\x1a\n" +
+	"\bdiverged\x18\x02 \x03(\tR\bdiverged\"\x82\x01\n" +
+	"\x14DispatchTasksRequest\x12#\n" +
+	"\x03job\x18\x01 \x01(\v2\x11.swarm.v1.JobSpecR\x03job\x12$\n" +
+	"\x05tasks\x18\x02 \x03(\v2\x0e.swarm.v1.TaskR\x05tasks\x12\x1f\n" +
+	"\vresult_sink\x18\x03 \x01(\tR\n" +
+	"resultSink\"K\n" +
+	"\x15DispatchTasksResponse\x12\x1a\n" +
+	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x87\x01\n" +
+	"\x10PartialAggregate\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x16\n" +
+	"\x06region\x18\x02 \x01(\tR\x06region\x12\x1a\n" +
+	"\btemplate\x18\x03 \x01(\tR\btemplate\x12\x14\n" +
+	"\x05value\x18\x04 \x01(\fR\x05value\x12\x12\n" +
+	"\x04done\x18\x05 \x01(\bR\x04done\"L\n" +
+	"\x14ReportPartialRequest\x124\n" +
+	"\apartial\x18\x01 \x01(\v2\x1a.swarm.v1.PartialAggregateR\apartial\"'\n" +
+	"\x15ReportPartialResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok*m\n" +
 	"\bCoupling\x12\x18\n" +
 	"\x14COUPLING_INDEPENDENT\x10\x00\x12\x14\n" +
 	"\x10COUPLING_BARRIER\x10\x01\x12\x13\n" +
 	"\x0fCOUPLING_LEADER\x10\x02\x12\x1c\n" +
-	"\x18COUPLING_MESSAGE_PASSING\x10\x032\xe9\x03\n" +
+	"\x18COUPLING_MESSAGE_PASSING\x10\x03*I\n" +
+	"\x06Health\x12\x12\n" +
+	"\x0eHEALTH_HEALTHY\x10\x00\x12\x13\n" +
+	"\x0fHEALTH_DEGRADED\x10\x01\x12\x16\n" +
+	"\x12HEALTH_UNREACHABLE\x10\x022\xbb\x04\n" +
 	"\fControlPlane\x12D\n" +
 	"\tSubmitJob\x12\x1a.swarm.v1.SubmitJobRequest\x1a\x1b.swarm.v1.SubmitJobResponse\x12D\n" +
 	"\tJoinAgent\x12\x1a.swarm.v1.JoinAgentRequest\x1a\x1b.swarm.v1.JoinAgentResponse\x12D\n" +
@@ -910,6 +1691,13 @@ const file_swarm_proto_rawDesc = "" +
 	"\bPullTask\x12\x19.swarm.v1.PullTaskRequest\x1a\x1a.swarm.v1.PullTaskResponse\x12M\n" +
 	"\fReportResult\x12\x1d.swarm.v1.ReportResultRequest\x1a\x1e.swarm.v1.ReportResultResponse\x12/\n" +
 	"\x02Ps\x12\x13.swarm.v1.PsRequest\x1a\x14.swarm.v1.PsResponse\x12D\n" +
+	"\tJobStatus\x12\x1a.swarm.v1.JobStatusRequest\x1a\x1b.swarm.v1.JobStatusResponse\x12P\n" +
+	"\rDispatchTasks\x12\x1e.swarm.v1.DispatchTasksRequest\x1a\x1f.swarm.v1.DispatchTasksResponse2\x8a\x03\n" +
+	"\fGlobalRouter\x12A\n" +
+	"\x06Submit\x12\x1a.swarm.v1.SubmitJobRequest\x1a\x1b.swarm.v1.SubmitJobResponse\x12S\n" +
+	"\x0ePublishSummary\x12\x1f.swarm.v1.PublishSummaryRequest\x1a .swarm.v1.PublishSummaryResponse\x12J\n" +
+	"\rGetGlobalView\x12\x1b.swarm.v1.GlobalViewRequest\x1a\x1c.swarm.v1.GlobalViewResponse\x12P\n" +
+	"\rReportPartial\x12\x1e.swarm.v1.ReportPartialRequest\x1a\x1f.swarm.v1.ReportPartialResponse\x12D\n" +
 	"\tJobStatus\x12\x1a.swarm.v1.JobStatusRequest\x1a\x1b.swarm.v1.JobStatusResponseB=Z;github.com/msivraj/swarm/internal/shell/transport;transportb\x06proto3"
 
 var (
@@ -924,50 +1712,85 @@ func file_swarm_proto_rawDescGZIP() []byte {
 	return file_swarm_proto_rawDescData
 }
 
-var file_swarm_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_swarm_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_swarm_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_swarm_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_swarm_proto_goTypes = []any{
-	(Coupling)(0),                // 0: swarm.v1.Coupling
-	(*SubmitJobRequest)(nil),     // 1: swarm.v1.SubmitJobRequest
-	(*SubmitJobResponse)(nil),    // 2: swarm.v1.SubmitJobResponse
-	(*JoinAgentRequest)(nil),     // 3: swarm.v1.JoinAgentRequest
-	(*JoinAgentResponse)(nil),    // 4: swarm.v1.JoinAgentResponse
-	(*HeartbeatRequest)(nil),     // 5: swarm.v1.HeartbeatRequest
-	(*HeartbeatResponse)(nil),    // 6: swarm.v1.HeartbeatResponse
-	(*Task)(nil),                 // 7: swarm.v1.Task
-	(*PullTaskRequest)(nil),      // 8: swarm.v1.PullTaskRequest
-	(*PullTaskResponse)(nil),     // 9: swarm.v1.PullTaskResponse
-	(*ReportResultRequest)(nil),  // 10: swarm.v1.ReportResultRequest
-	(*ReportResultResponse)(nil), // 11: swarm.v1.ReportResultResponse
-	(*PsRequest)(nil),            // 12: swarm.v1.PsRequest
-	(*PsResponse)(nil),           // 13: swarm.v1.PsResponse
-	(*JobStatusRequest)(nil),     // 14: swarm.v1.JobStatusRequest
-	(*JobStatusResponse)(nil),    // 15: swarm.v1.JobStatusResponse
-	nil,                          // 16: swarm.v1.SubmitJobRequest.ParamsEntry
+	(Coupling)(0),                  // 0: swarm.v1.Coupling
+	(Health)(0),                    // 1: swarm.v1.Health
+	(*SubmitJobRequest)(nil),       // 2: swarm.v1.SubmitJobRequest
+	(*SubmitJobResponse)(nil),      // 3: swarm.v1.SubmitJobResponse
+	(*JoinAgentRequest)(nil),       // 4: swarm.v1.JoinAgentRequest
+	(*JoinAgentResponse)(nil),      // 5: swarm.v1.JoinAgentResponse
+	(*HeartbeatRequest)(nil),       // 6: swarm.v1.HeartbeatRequest
+	(*HeartbeatResponse)(nil),      // 7: swarm.v1.HeartbeatResponse
+	(*Task)(nil),                   // 8: swarm.v1.Task
+	(*PullTaskRequest)(nil),        // 9: swarm.v1.PullTaskRequest
+	(*PullTaskResponse)(nil),       // 10: swarm.v1.PullTaskResponse
+	(*ReportResultRequest)(nil),    // 11: swarm.v1.ReportResultRequest
+	(*ReportResultResponse)(nil),   // 12: swarm.v1.ReportResultResponse
+	(*PsRequest)(nil),              // 13: swarm.v1.PsRequest
+	(*PsResponse)(nil),             // 14: swarm.v1.PsResponse
+	(*JobStatusRequest)(nil),       // 15: swarm.v1.JobStatusRequest
+	(*JobStatusResponse)(nil),      // 16: swarm.v1.JobStatusResponse
+	(*JobSpec)(nil),                // 17: swarm.v1.JobSpec
+	(*RegionalSummary)(nil),        // 18: swarm.v1.RegionalSummary
+	(*RegionView)(nil),             // 19: swarm.v1.RegionView
+	(*PublishSummaryRequest)(nil),  // 20: swarm.v1.PublishSummaryRequest
+	(*PublishSummaryResponse)(nil), // 21: swarm.v1.PublishSummaryResponse
+	(*GlobalViewRequest)(nil),      // 22: swarm.v1.GlobalViewRequest
+	(*GlobalViewResponse)(nil),     // 23: swarm.v1.GlobalViewResponse
+	(*DispatchTasksRequest)(nil),   // 24: swarm.v1.DispatchTasksRequest
+	(*DispatchTasksResponse)(nil),  // 25: swarm.v1.DispatchTasksResponse
+	(*PartialAggregate)(nil),       // 26: swarm.v1.PartialAggregate
+	(*ReportPartialRequest)(nil),   // 27: swarm.v1.ReportPartialRequest
+	(*ReportPartialResponse)(nil),  // 28: swarm.v1.ReportPartialResponse
+	nil,                            // 29: swarm.v1.SubmitJobRequest.ParamsEntry
+	nil,                            // 30: swarm.v1.JobSpec.ParamsEntry
 }
 var file_swarm_proto_depIdxs = []int32{
 	0,  // 0: swarm.v1.SubmitJobRequest.coupling:type_name -> swarm.v1.Coupling
-	16, // 1: swarm.v1.SubmitJobRequest.params:type_name -> swarm.v1.SubmitJobRequest.ParamsEntry
-	7,  // 2: swarm.v1.PullTaskResponse.task:type_name -> swarm.v1.Task
-	1,  // 3: swarm.v1.ControlPlane.SubmitJob:input_type -> swarm.v1.SubmitJobRequest
-	3,  // 4: swarm.v1.ControlPlane.JoinAgent:input_type -> swarm.v1.JoinAgentRequest
-	5,  // 5: swarm.v1.ControlPlane.Heartbeat:input_type -> swarm.v1.HeartbeatRequest
-	8,  // 6: swarm.v1.ControlPlane.PullTask:input_type -> swarm.v1.PullTaskRequest
-	10, // 7: swarm.v1.ControlPlane.ReportResult:input_type -> swarm.v1.ReportResultRequest
-	12, // 8: swarm.v1.ControlPlane.Ps:input_type -> swarm.v1.PsRequest
-	14, // 9: swarm.v1.ControlPlane.JobStatus:input_type -> swarm.v1.JobStatusRequest
-	2,  // 10: swarm.v1.ControlPlane.SubmitJob:output_type -> swarm.v1.SubmitJobResponse
-	4,  // 11: swarm.v1.ControlPlane.JoinAgent:output_type -> swarm.v1.JoinAgentResponse
-	6,  // 12: swarm.v1.ControlPlane.Heartbeat:output_type -> swarm.v1.HeartbeatResponse
-	9,  // 13: swarm.v1.ControlPlane.PullTask:output_type -> swarm.v1.PullTaskResponse
-	11, // 14: swarm.v1.ControlPlane.ReportResult:output_type -> swarm.v1.ReportResultResponse
-	13, // 15: swarm.v1.ControlPlane.Ps:output_type -> swarm.v1.PsResponse
-	15, // 16: swarm.v1.ControlPlane.JobStatus:output_type -> swarm.v1.JobStatusResponse
-	10, // [10:17] is the sub-list for method output_type
-	3,  // [3:10] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	29, // 1: swarm.v1.SubmitJobRequest.params:type_name -> swarm.v1.SubmitJobRequest.ParamsEntry
+	8,  // 2: swarm.v1.PullTaskResponse.task:type_name -> swarm.v1.Task
+	0,  // 3: swarm.v1.JobSpec.coupling:type_name -> swarm.v1.Coupling
+	30, // 4: swarm.v1.JobSpec.params:type_name -> swarm.v1.JobSpec.ParamsEntry
+	1,  // 5: swarm.v1.RegionalSummary.health:type_name -> swarm.v1.Health
+	1,  // 6: swarm.v1.RegionView.health:type_name -> swarm.v1.Health
+	18, // 7: swarm.v1.PublishSummaryRequest.summary:type_name -> swarm.v1.RegionalSummary
+	19, // 8: swarm.v1.GlobalViewResponse.regions:type_name -> swarm.v1.RegionView
+	17, // 9: swarm.v1.DispatchTasksRequest.job:type_name -> swarm.v1.JobSpec
+	8,  // 10: swarm.v1.DispatchTasksRequest.tasks:type_name -> swarm.v1.Task
+	26, // 11: swarm.v1.ReportPartialRequest.partial:type_name -> swarm.v1.PartialAggregate
+	2,  // 12: swarm.v1.ControlPlane.SubmitJob:input_type -> swarm.v1.SubmitJobRequest
+	4,  // 13: swarm.v1.ControlPlane.JoinAgent:input_type -> swarm.v1.JoinAgentRequest
+	6,  // 14: swarm.v1.ControlPlane.Heartbeat:input_type -> swarm.v1.HeartbeatRequest
+	9,  // 15: swarm.v1.ControlPlane.PullTask:input_type -> swarm.v1.PullTaskRequest
+	11, // 16: swarm.v1.ControlPlane.ReportResult:input_type -> swarm.v1.ReportResultRequest
+	13, // 17: swarm.v1.ControlPlane.Ps:input_type -> swarm.v1.PsRequest
+	15, // 18: swarm.v1.ControlPlane.JobStatus:input_type -> swarm.v1.JobStatusRequest
+	24, // 19: swarm.v1.ControlPlane.DispatchTasks:input_type -> swarm.v1.DispatchTasksRequest
+	2,  // 20: swarm.v1.GlobalRouter.Submit:input_type -> swarm.v1.SubmitJobRequest
+	20, // 21: swarm.v1.GlobalRouter.PublishSummary:input_type -> swarm.v1.PublishSummaryRequest
+	22, // 22: swarm.v1.GlobalRouter.GetGlobalView:input_type -> swarm.v1.GlobalViewRequest
+	27, // 23: swarm.v1.GlobalRouter.ReportPartial:input_type -> swarm.v1.ReportPartialRequest
+	15, // 24: swarm.v1.GlobalRouter.JobStatus:input_type -> swarm.v1.JobStatusRequest
+	3,  // 25: swarm.v1.ControlPlane.SubmitJob:output_type -> swarm.v1.SubmitJobResponse
+	5,  // 26: swarm.v1.ControlPlane.JoinAgent:output_type -> swarm.v1.JoinAgentResponse
+	7,  // 27: swarm.v1.ControlPlane.Heartbeat:output_type -> swarm.v1.HeartbeatResponse
+	10, // 28: swarm.v1.ControlPlane.PullTask:output_type -> swarm.v1.PullTaskResponse
+	12, // 29: swarm.v1.ControlPlane.ReportResult:output_type -> swarm.v1.ReportResultResponse
+	14, // 30: swarm.v1.ControlPlane.Ps:output_type -> swarm.v1.PsResponse
+	16, // 31: swarm.v1.ControlPlane.JobStatus:output_type -> swarm.v1.JobStatusResponse
+	25, // 32: swarm.v1.ControlPlane.DispatchTasks:output_type -> swarm.v1.DispatchTasksResponse
+	3,  // 33: swarm.v1.GlobalRouter.Submit:output_type -> swarm.v1.SubmitJobResponse
+	21, // 34: swarm.v1.GlobalRouter.PublishSummary:output_type -> swarm.v1.PublishSummaryResponse
+	23, // 35: swarm.v1.GlobalRouter.GetGlobalView:output_type -> swarm.v1.GlobalViewResponse
+	28, // 36: swarm.v1.GlobalRouter.ReportPartial:output_type -> swarm.v1.ReportPartialResponse
+	16, // 37: swarm.v1.GlobalRouter.JobStatus:output_type -> swarm.v1.JobStatusResponse
+	25, // [25:38] is the sub-list for method output_type
+	12, // [12:25] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_swarm_proto_init() }
@@ -980,10 +1803,10 @@ func file_swarm_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_swarm_proto_rawDesc), len(file_swarm_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   16,
+			NumEnums:      2,
+			NumMessages:   29,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_swarm_proto_goTypes,
 		DependencyIndexes: file_swarm_proto_depIdxs,
