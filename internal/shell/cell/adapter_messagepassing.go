@@ -41,9 +41,29 @@ func (MessagePassingDriver) Step(s State, ev Event, _ model.Instant) (State, []C
 		return stepMessage(mps, ev.Message)
 	case EventCrash:
 		return stepCrash(mps, ev.Crashed)
+	case EventAggregate:
+		return mps, stepAggregate(mps)
 	default:
 		return mps, nil
 	}
+}
+
+// stepAggregate gathers every currently-tracked actor's state into one
+// OpAggregate Command (issue #73's msgpass/agent-sim combine wiring — see
+// EventAggregate's doc in cell.go). State itself is unchanged: aggregating
+// does not fold anything new into any actor, it only reads what React has
+// already folded so far. An empty actor set emits no command, mirroring
+// barrier's own "nothing to reduce, nothing to emit" convention (see
+// barrier.go's decision D).
+func stepAggregate(mps MessagePassingState) []Command {
+	if len(mps.Actors) == 0 {
+		return nil
+	}
+	states := make(map[messagepassing.ActorID][]byte, len(mps.Actors))
+	for id, actor := range mps.Actors {
+		states[id] = actor.State
+	}
+	return []Command{{Op: OpAggregate, AggregateStates: states}}
 }
 
 // stepMessage folds m into its addressed actor via messagepassing.React,
