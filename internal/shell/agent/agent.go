@@ -176,6 +176,12 @@ type Config struct {
 	// agent then behaves exactly like a P0/P1 agent, matching every existing
 	// Config in this package.
 	Follower FollowerConfig
+
+	// CellLeader configures P2 agent-hosted per-cell leadership (issue
+	// #102). Leaving it zero-valued (CellLeader.RaftListen == "") disables
+	// it entirely — the 5th run loop (runCellLeader) stays inert, matching
+	// every existing Config in this package.
+	CellLeader CellLeaderConfig
 }
 
 func (c Config) withDefaults() Config {
@@ -198,6 +204,7 @@ func (c Config) withDefaults() Config {
 		c.GlobalViewInterval = defaultGlobalViewInterval
 	}
 	c.Follower = c.Follower.withDefaults()
+	c.CellLeader = c.CellLeader.withDefaults()
 	return c
 }
 
@@ -247,21 +254,24 @@ func New(cfg Config) *Agent {
 }
 
 // Run drives the registration loop, the task-runner loop, the (in
-// multi-region mode) global-view poller, and the P2 follower loop until ctx
-// is done or one of them returns a non-cancellation error, in which case Run
-// cancels the others and returns that error. The follower loop is inert
-// unless Config.Follower.Listen is set (see runFollower) — a plain P0/P1
-// Config runs exactly the first two loops in substance.
+// multi-region mode) global-view poller, the P2 follower loop, and the P2
+// cell-leader loop until ctx is done or one of them returns a
+// non-cancellation error, in which case Run cancels the others and returns
+// that error. The follower and cell-leader loops are inert unless
+// Config.Follower.Listen / Config.CellLeader.RaftListen are set (see
+// runFollower, runCellLeader) — a plain P0/P1 Config runs exactly the first
+// two loops in substance.
 func (a *Agent) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	const loops = 4
+	const loops = 5
 	errCh := make(chan error, loops)
 	go func() { errCh <- a.runRegistration(ctx) }()
 	go func() { errCh <- a.runRunner(ctx) }()
 	go func() { errCh <- a.runGlobalView(ctx) }()
 	go func() { errCh <- a.runFollower(ctx) }()
+	go func() { errCh <- a.runCellLeader(ctx) }()
 
 	var firstErr error
 	for i := 0; i < loops; i++ {
