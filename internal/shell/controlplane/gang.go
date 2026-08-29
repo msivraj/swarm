@@ -98,6 +98,17 @@ func (s *Server) admitGangLocked(job model.JobSpec) admission.Gang {
 		return admission.Gang{Kind: admission.Wait}
 	}
 	s.gangJobs[job.ID] = gangReservation{job: job, assignments: g.Assignments}
+	// A Barrier gang whose Params ask for cell activation (#98) gets its
+	// CellAssignments built right here, the single choke point every Place
+	// decision passes through whether it came from SubmitJob or a later
+	// retryPendingGangsLocked capacity-change retry. Activation failure
+	// (e.g. a malformed dist-training request) is not this gang's admission
+	// failing — the reservation above already committed, and gang.go's own
+	// contract ("SubmitJob never rejects a well-formed gang job for lack of
+	// capacity") extends to a request activation can't service either;
+	// there is no caller here (retry runs off the background loops, not an
+	// RPC) to surface it to.
+	_ = s.activateCoupledCellLocked(job, g)
 	return g
 }
 

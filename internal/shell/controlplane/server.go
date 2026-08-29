@@ -70,6 +70,9 @@ type Server struct {
 	gangReserved map[model.CellID]int            // cell -> slots currently held by an admitted gang's reservation (see gang.go)
 	gangJobs     map[model.JobID]gangReservation // job -> its committed Place reservation, once admitted
 	gangPending  []model.JobSpec                 // gang JobSpecs admitGangLocked returned Wait for, FIFO, retried by retryPendingGangsLocked on capacity change
+
+	agentAddrs      map[string]agentAddr                         // agent -> its advertised raft_addr/cell_leader_addr (#101 JoinAgent fields), learned at JoinAgent
+	cellAssignments map[string]*transport.CellAssignmentResponse // agent -> its coupled-cell CellAssignment (#101), once activateCoupledCellLocked has built one for it
 }
 
 // New returns a Server ready to Serve. now supplies the clock (and the
@@ -107,6 +110,9 @@ func New(st store.Store, cfg Config, now func() model.Instant) *Server {
 		finalized:     make(map[model.JobID]struct{}),
 		gangReserved:  make(map[model.CellID]int),
 		gangJobs:      make(map[model.JobID]gangReservation),
+
+		agentAddrs:      make(map[string]agentAddr),
+		cellAssignments: make(map[string]*transport.CellAssignmentResponse),
 	}
 }
 

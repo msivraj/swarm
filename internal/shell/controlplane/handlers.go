@@ -94,6 +94,7 @@ func (s *Server) JoinAgent(_ context.Context, req *transport.JoinAgentRequest) (
 			Kind: registry.AgentJoined, Cell: decision.Cell, Agent: registry.AgentID(agent),
 		})
 		s.recordJoinLocked(agent, decision.Cell)
+		s.recordJoinAddrLocked(agent, req)
 		// A joining agent added capacity, so re-run placement over any tasks
 		// the ingress pending buffer is holding — one of them may now fit.
 		if err := s.drainPendingLocked(); err != nil {
@@ -113,6 +114,7 @@ func (s *Server) JoinAgent(_ context.Context, req *transport.JoinAgentRequest) (
 		s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.CellUp, Cell: cellID, Capacity: capacity})
 		s.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.AgentJoined, Cell: cellID, Agent: registry.AgentID(agent)})
 		s.recordJoinLocked(agent, cellID)
+		s.recordJoinAddrLocked(agent, req)
 		// A new cell appeared, so re-run placement over the pending buffer
 		// the same way the Accept branch does.
 		if err := s.drainPendingLocked(); err != nil {
@@ -141,6 +143,16 @@ func (s *Server) recordJoinLocked(agent string, cell model.CellID) {
 	s.lastSeen[agent] = s.now()
 }
 
+// recordJoinAddrLocked records agent's advertised raft/cell-leader
+// listeners from req (#101's JoinAgentRequest.raft_addr/cell_leader_addr),
+// the addresses a coupled cell's raft peer set (activateCoupledCellLocked)
+// reads back out. A P0/P1 agent that never joins a coupled cell leaves both
+// empty, which is exactly what it sends today — recording them here does
+// not change JoinAgent's existing behavior for it. Callers must hold s.mu.
+func (s *Server) recordJoinAddrLocked(agent string, req *transport.JoinAgentRequest) {
+	s.agentAddrs[agent] = agentAddr{raftAddr: req.GetRaftAddr(), cellLeaderAddr: req.GetCellLeaderAddr()}
+}
+
 // Heartbeat refreshes agent's last-contact time, which the reaper loop reads
 // to decide whether to evict it.
 func (s *Server) Heartbeat(_ context.Context, req *transport.HeartbeatRequest) (*transport.HeartbeatResponse, error) {
@@ -148,6 +160,24 @@ func (s *Server) Heartbeat(_ context.Context, req *transport.HeartbeatRequest) (
 	s.lastSeen[req.GetAgent()] = s.now()
 	s.mu.Unlock()
 	return &transport.HeartbeatResponse{Ok: true}, nil
+}
+
+// CellAssignment serves req.Agent's pending coupled-cell assignment (#101):
+// has_assignment=false if activateCoupledCellLocked has never built one for
+// this agent (a plain P0/P1 agent, or one this control plane has not yet
+// activated), otherwise the full assignment exactly as
+// activateCoupledCellLocked built it — this is the only channel that tells
+// an agent it is now in a coupled cell (activating #96/#102). A repeated
+// poll for the same agent gets the same response back: nothing here ever
+// clears an assignment once made.
+func (s *Server) CellAssignment(_ context.Context, req *transport.CellAssignmentRequest) (*transport.CellAssignmentResponse, error) {
+	s.mu.Lock()
+	assignment, ok := s.cellAssignments[req.GetAgent()]
+	s.mu.Unlock()
+	if !ok {
+		return &transport.CellAssignmentResponse{HasAssignment: false}, nil
+	}
+	return assignment, nil
 }
 
 // PullTask serves the agent's runner loop from its own cell's queue: it
@@ -196,6 +226,26 @@ func (s *Server) PullTask(_ context.Context, req *transport.PullTaskRequest) (*t
 // aggregating on incomplete data.
 func (s *Server) ReportResult(_ context.Context, req *transport.ReportResultRequest) (*transport.ReportResultResponse, error) {
 	taskID := model.TaskID(req.GetTaskId())
+
+	// A coupled gang's elected leader reports its final, all-reduced
+	// gradient (D6, #98) keyed by the job id itself, reusing this same RPC
+	// rather than a dedicated one (owner-decided, no new proto) — gang jobs
+	// never go through admission.Admit's per-task decomposition (see
+	// gang.go), so there is no TaskID here for store.PutResult to
+	// recognize. s.gangJobs only ever holds entries for MinMembers>0 jobs
+	// (see admitGangLocked), so this check can never match a P0/P1
+	// Independent job's real TaskID and leaves that path byte-for-byte
+	// unchanged.
+	s.mu.Lock()
+	_, isGangJob := s.gangJobs[model.JobID(taskID)]
+	s.mu.Unlock()
+	if isGangJob {
+		if err := s.onCoupledComplete(model.JobID(taskID), req.GetOutput()); err != nil {
+			return nil, status.Errorf(codes.Internal, "coupled completion for job %s: %v", taskID, err)
+		}
+		return &transport.ReportResultResponse{Accepted: true}, nil
+	}
+
 	result := model.TaskResult{TaskID: taskID, Output: req.GetOutput(), OK: req.GetOk()}
 
 	if err := s.store.PutResult(result); err != nil {
