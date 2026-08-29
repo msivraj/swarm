@@ -15,14 +15,18 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hashicorp/raft"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/msivraj/swarm/internal/core/templates"
 	"github.com/msivraj/swarm/internal/model"
@@ -30,6 +34,33 @@ import (
 	"github.com/msivraj/swarm/internal/shell/cell"
 	"github.com/msivraj/swarm/internal/shell/transport"
 )
+
+// requireCleanOrDroppedAgentShutdown is requireCleanAgentShutdown
+// (barrier_disttraining_test.go) with the SAME nil/context.Canceled/
+// codes.Canceled tolerance, plus one more this file's own scenarios need:
+// codes.Unavailable, and the raw "connection refused" a dial failure can
+// surface as before gRPC has wrapped it into a status error. This ticket's
+// three resilience scenarios deliberately drop or kill cell agents mid-run —
+// a straggler's own ctx cancellation racing a dial FROM a surviving member
+// that has not yet noticed it is gone, or killCellLeader's abrupt raft
+// Shutdown racing an in-flight AssignWork/StepReport call TO the now-dead
+// peer — so a surviving or dropped agent's Run legitimately unwinding
+// through "the peer I was mid-call to is gone" at teardown is an EXPECTED
+// consequence of the scenario, not a real failure. The #99 happy path
+// (TestBarrierDistTraining) never drops an agent, so it keeps using the
+// strict requireCleanAgentShutdown unchanged — an Unavailable there WOULD
+// still be a real bug.
+func requireCleanOrDroppedAgentShutdown(t *testing.T, who string, err error) {
+	t.Helper()
+	if err == nil ||
+		errors.Is(err, context.Canceled) ||
+		status.Code(err) == codes.Canceled ||
+		status.Code(err) == codes.Unavailable ||
+		strings.Contains(err.Error(), "connection refused") {
+		return
+	}
+	t.Errorf("agent %s Run: %v", who, err)
+}
 
 // slowWorker execs bin exactly like the default follower Worker would (see
 // Agent.execProcess: Task.Input on stdin, stdout captured verbatim), but
@@ -125,7 +156,7 @@ func startResilientAgent(t *testing.T, id string, dial agent.Dialer, worker, raf
 		cancel()
 		select {
 		case err := <-done:
-			requireCleanAgentShutdown(t, id, err)
+			requireCleanOrDroppedAgentShutdown(t, id, err)
 		case <-time.After(10 * time.Second):
 			t.Errorf("agent %s Run did not return within 10s of cancellation", id)
 		}
@@ -273,22 +304,35 @@ func TestBarrier_StragglerEvicted(t *testing.T) {
 
 	// Directly assert the barrier evicted the straggler (OpEvict) — the
 	// command, not just its downstream effect on the aggregate.
+	//
+	// Poll rather than check once: watchStragglers' own loop.Handle call
+	// (the SAME goroutine, not the control plane's) cascades synchronously
+	// through every remaining step, including the terminal ReportResult that
+	// flips JobStatus.Done — Loop.Handle is Step -> Apply -> Exec, and Exec
+	// here recursively drives the rest of the run to completion before
+	// Handle ever returns. recordDeadlineOutcome (which appends to
+	// Evicted()) only runs AFTER Handle returns, so a test goroutine polling
+	// the control plane can observe Done=true a moment before Evicted() has
+	// settled, especially under load (CI, low GOMAXPROCS) — this is a real,
+	// expected ordering gap in observability bookkeeping, not something
+	// worth forcing synchronous in production for a test's sake.
 	wantEvicted := fmt.Sprintf("se-agent-%d", numAgents-1)
-	found := false
-	for _, a := range agents {
-		host := a.CellLeaderHost()
-		if host == nil {
-			continue
-		}
-		if evicted := host.Evicted(); len(evicted) > 0 {
-			found = true
-			if len(evicted) != 1 || evicted[0] != wantEvicted {
-				t.Fatalf("Evicted() = %v, want exactly [%s]", evicted, wantEvicted)
+	var evicted []string
+	waitFor(t, 10*time.Second, func() bool {
+		for _, a := range agents {
+			host := a.CellLeaderHost()
+			if host == nil {
+				continue
+			}
+			if e := host.Evicted(); len(e) > 0 {
+				evicted = e
+				return true
 			}
 		}
-	}
-	if !found {
-		t.Fatalf("no agent's LeaderHost recorded an eviction")
+		return false
+	})
+	if len(evicted) != 1 || evicted[0] != wantEvicted {
+		t.Fatalf("Evicted() = %v, want exactly [%s]", evicted, wantEvicted)
 	}
 }
 
