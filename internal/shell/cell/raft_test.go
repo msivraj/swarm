@@ -102,9 +102,17 @@ func TestRaftElection_ThreeNodes(t *testing.T) {
 	}
 
 	// The new leader "resumes": its FSM replicated the command log applied
-	// before the failover.
-	log := second.FSM.Log()
-	if len(log) != 1 || log[0].Op != OpRelease || log[0].Step != 1 {
-		t.Fatalf("new leader's replicated log = %#v, want the pre-failover entry", log)
+	// before the failover. Raft applies committed entries to the FSM
+	// asynchronously, so the entry may not have propagated at the instant the
+	// node becomes leader — poll until it catches up rather than reading once
+	// (which races under -race on a loaded CI runner).
+	deadline := time.Now().Add(5 * time.Second)
+	var log []Command
+	for time.Now().Before(deadline) {
+		if log = second.FSM.Log(); len(log) == 1 && log[0].Op == OpRelease && log[0].Step == 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
+	t.Fatalf("new leader's replicated log = %#v, want the pre-failover entry", log)
 }
