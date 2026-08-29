@@ -90,3 +90,63 @@ func DecodeMCAggregate(b []byte) (MCAggregate, bool) {
 		Variance: math.Float64frombits(binary.BigEndian.Uint64(b[24:32])),
 	}, true
 }
+
+// EncodeGradient encodes a gradient vector as consecutive big-endian
+// float64s, one per model parameter — exactly the wire format
+// internal/core/templates.DistTrainingCombine (sumFloat64Vectors) sums, and
+// the layout DecodeGradient decodes back. A nil or empty v encodes to a
+// zero-length (non-nil) byte slice: dist-training's step 0 has no incoming
+// gradient yet, and that is how internal/e2e/workers/disttraining's stdin
+// contract represents "none".
+func EncodeGradient(v []float64) []byte {
+	out := make([]byte, len(v)*8)
+	for i, f := range v {
+		binary.BigEndian.PutUint64(out[i*8:i*8+8], math.Float64bits(f))
+	}
+	return out
+}
+
+// DecodeGradient decodes b, a sequence of big-endian float64s, back into a
+// gradient vector. A zero-length b decodes to a zero-length (non-nil)
+// vector — dist-training's "no incoming gradient yet" case — rather than
+// being rejected; any other length that is not a multiple of 8 is
+// malformed.
+func DecodeGradient(b []byte) ([]float64, bool) {
+	if len(b)%8 != 0 {
+		return nil, false
+	}
+	out := make([]float64, len(b)/8)
+	for i := range out {
+		out[i] = math.Float64frombits(binary.BigEndian.Uint64(b[i*8 : i*8+8]))
+	}
+	return out, true
+}
+
+// EncodeDTStdin encodes a dist-training worker's stdin: the worker's
+// sample-index shard [start, end) and the barrier step, as big-endian
+// uint64s, followed by the incoming all-reduced gradient (EncodeGradient);
+// step 0's incoming should be nil/empty. Mirrors the layout DecodeDTStdin
+// decodes, which internal/e2e/workers/disttraining's main.go consumes.
+func EncodeDTStdin(start, end, step uint64, incoming []float64) []byte {
+	out := make([]byte, 24, 24+len(incoming)*8)
+	binary.BigEndian.PutUint64(out[0:8], start)
+	binary.BigEndian.PutUint64(out[8:16], end)
+	binary.BigEndian.PutUint64(out[16:24], step)
+	return append(out, EncodeGradient(incoming)...)
+}
+
+// DecodeDTStdin decodes a dist-training worker's stdin, the layout
+// EncodeDTStdin produces: two big-endian uint64s [start, end) (the worker's
+// sample-index shard), one big-endian uint64 step, and the incoming
+// all-reduced gradient as zero or more consecutive big-endian float64s
+// (empty at step 0).
+func DecodeDTStdin(b []byte) (start, end, step uint64, incoming []float64, ok bool) {
+	if len(b) < 24 {
+		return 0, 0, 0, nil, false
+	}
+	incoming, ok = DecodeGradient(b[24:])
+	if !ok {
+		return 0, 0, 0, nil, false
+	}
+	return binary.BigEndian.Uint64(b[0:8]), binary.BigEndian.Uint64(b[8:16]), binary.BigEndian.Uint64(b[16:24]), incoming, true
+}
