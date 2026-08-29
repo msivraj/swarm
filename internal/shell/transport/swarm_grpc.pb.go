@@ -19,14 +19,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ControlPlane_SubmitJob_FullMethodName     = "/swarm.v1.ControlPlane/SubmitJob"
-	ControlPlane_JoinAgent_FullMethodName     = "/swarm.v1.ControlPlane/JoinAgent"
-	ControlPlane_Heartbeat_FullMethodName     = "/swarm.v1.ControlPlane/Heartbeat"
-	ControlPlane_PullTask_FullMethodName      = "/swarm.v1.ControlPlane/PullTask"
-	ControlPlane_ReportResult_FullMethodName  = "/swarm.v1.ControlPlane/ReportResult"
-	ControlPlane_Ps_FullMethodName            = "/swarm.v1.ControlPlane/Ps"
-	ControlPlane_JobStatus_FullMethodName     = "/swarm.v1.ControlPlane/JobStatus"
-	ControlPlane_DispatchTasks_FullMethodName = "/swarm.v1.ControlPlane/DispatchTasks"
+	ControlPlane_SubmitJob_FullMethodName      = "/swarm.v1.ControlPlane/SubmitJob"
+	ControlPlane_JoinAgent_FullMethodName      = "/swarm.v1.ControlPlane/JoinAgent"
+	ControlPlane_Heartbeat_FullMethodName      = "/swarm.v1.ControlPlane/Heartbeat"
+	ControlPlane_PullTask_FullMethodName       = "/swarm.v1.ControlPlane/PullTask"
+	ControlPlane_ReportResult_FullMethodName   = "/swarm.v1.ControlPlane/ReportResult"
+	ControlPlane_Ps_FullMethodName             = "/swarm.v1.ControlPlane/Ps"
+	ControlPlane_JobStatus_FullMethodName      = "/swarm.v1.ControlPlane/JobStatus"
+	ControlPlane_DispatchTasks_FullMethodName  = "/swarm.v1.ControlPlane/DispatchTasks"
+	ControlPlane_CellAssignment_FullMethodName = "/swarm.v1.ControlPlane/CellAssignment"
 )
 
 // ControlPlaneClient is the client API for ControlPlane service.
@@ -46,6 +47,9 @@ type ControlPlaneClient interface {
 	JobStatus(ctx context.Context, in *JobStatusRequest, opts ...grpc.CallOption) (*JobStatusResponse, error)
 	// Cross-region task delivery: global->region (spread) and region->region (spill).
 	DispatchTasks(ctx context.Context, in *DispatchTasksRequest, opts ...grpc.CallOption) (*DispatchTasksResponse, error)
+	// A cell agent polls whether it belongs to a coupled cell and, if so, its
+	// raft peer set + barrier shard (P2 coupled-cell activation).
+	CellAssignment(ctx context.Context, in *CellAssignmentRequest, opts ...grpc.CallOption) (*CellAssignmentResponse, error)
 }
 
 type controlPlaneClient struct {
@@ -136,6 +140,16 @@ func (c *controlPlaneClient) DispatchTasks(ctx context.Context, in *DispatchTask
 	return out, nil
 }
 
+func (c *controlPlaneClient) CellAssignment(ctx context.Context, in *CellAssignmentRequest, opts ...grpc.CallOption) (*CellAssignmentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CellAssignmentResponse)
+	err := c.cc.Invoke(ctx, ControlPlane_CellAssignment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ControlPlaneServer is the server API for ControlPlane service.
 // All implementations must embed UnimplementedControlPlaneServer
 // for forward compatibility.
@@ -153,6 +167,9 @@ type ControlPlaneServer interface {
 	JobStatus(context.Context, *JobStatusRequest) (*JobStatusResponse, error)
 	// Cross-region task delivery: global->region (spread) and region->region (spill).
 	DispatchTasks(context.Context, *DispatchTasksRequest) (*DispatchTasksResponse, error)
+	// A cell agent polls whether it belongs to a coupled cell and, if so, its
+	// raft peer set + barrier shard (P2 coupled-cell activation).
+	CellAssignment(context.Context, *CellAssignmentRequest) (*CellAssignmentResponse, error)
 	mustEmbedUnimplementedControlPlaneServer()
 }
 
@@ -186,6 +203,9 @@ func (UnimplementedControlPlaneServer) JobStatus(context.Context, *JobStatusRequ
 }
 func (UnimplementedControlPlaneServer) DispatchTasks(context.Context, *DispatchTasksRequest) (*DispatchTasksResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DispatchTasks not implemented")
+}
+func (UnimplementedControlPlaneServer) CellAssignment(context.Context, *CellAssignmentRequest) (*CellAssignmentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CellAssignment not implemented")
 }
 func (UnimplementedControlPlaneServer) mustEmbedUnimplementedControlPlaneServer() {}
 func (UnimplementedControlPlaneServer) testEmbeddedByValue()                      {}
@@ -352,6 +372,24 @@ func _ControlPlane_DispatchTasks_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ControlPlane_CellAssignment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CellAssignmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPlaneServer).CellAssignment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPlane_CellAssignment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPlaneServer).CellAssignment(ctx, req.(*CellAssignmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ControlPlane_ServiceDesc is the grpc.ServiceDesc for ControlPlane service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -390,6 +428,10 @@ var ControlPlane_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DispatchTasks",
 			Handler:    _ControlPlane_DispatchTasks_Handler,
+		},
+		{
+			MethodName: "CellAssignment",
+			Handler:    _ControlPlane_CellAssignment_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

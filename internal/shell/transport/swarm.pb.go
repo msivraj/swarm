@@ -228,13 +228,19 @@ func (x *SubmitJobResponse) GetJobId() string {
 	return ""
 }
 
+// JoinAgentRequest: raft_addr and cell_leader_addr are the agent's two P2
+// listeners, advertised so a coupled cell can form its raft cluster and the
+// elected leader can reach it. Both empty for a P0/P1 agent that never joins a
+// coupled cell — existing JoinAgent behavior is unchanged.
 type JoinAgentRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Agent         string                 `protobuf:"bytes,1,opt,name=agent,proto3" json:"agent,omitempty"`
-	Region        string                 `protobuf:"bytes,2,opt,name=region,proto3" json:"region,omitempty"`
-	Caps          int32                  `protobuf:"varint,3,opt,name=caps,proto3" json:"caps,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Agent          string                 `protobuf:"bytes,1,opt,name=agent,proto3" json:"agent,omitempty"`
+	Region         string                 `protobuf:"bytes,2,opt,name=region,proto3" json:"region,omitempty"`
+	Caps           int32                  `protobuf:"varint,3,opt,name=caps,proto3" json:"caps,omitempty"`
+	RaftAddr       string                 `protobuf:"bytes,4,opt,name=raft_addr,json=raftAddr,proto3" json:"raft_addr,omitempty"`                     // TCP address this agent's raft NetworkTransport advertises
+	CellLeaderAddr string                 `protobuf:"bytes,5,opt,name=cell_leader_addr,json=cellLeaderAddr,proto3" json:"cell_leader_addr,omitempty"` // this agent's CellLeader gRPC address
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *JoinAgentRequest) Reset() {
@@ -286,6 +292,20 @@ func (x *JoinAgentRequest) GetCaps() int32 {
 		return x.Caps
 	}
 	return 0
+}
+
+func (x *JoinAgentRequest) GetRaftAddr() string {
+	if x != nil {
+		return x.RaftAddr
+	}
+	return ""
+}
+
+func (x *JoinAgentRequest) GetCellLeaderAddr() string {
+	if x != nil {
+		return x.CellLeaderAddr
+	}
+	return ""
 }
 
 type JoinAgentResponse struct {
@@ -348,6 +368,222 @@ func (x *JoinAgentResponse) GetReason() string {
 	return ""
 }
 
+type CellAssignmentRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Agent         string                 `protobuf:"bytes,1,opt,name=agent,proto3" json:"agent,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CellAssignmentRequest) Reset() {
+	*x = CellAssignmentRequest{}
+	mi := &file_swarm_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CellAssignmentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CellAssignmentRequest) ProtoMessage() {}
+
+func (x *CellAssignmentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CellAssignmentRequest.ProtoReflect.Descriptor instead.
+func (*CellAssignmentRequest) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *CellAssignmentRequest) GetAgent() string {
+	if x != nil {
+		return x.Agent
+	}
+	return ""
+}
+
+// CellPeer is one voter in a coupled cell's raft cluster.
+type CellPeer struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AgentId        string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	RaftAddr       string                 `protobuf:"bytes,2,opt,name=raft_addr,json=raftAddr,proto3" json:"raft_addr,omitempty"`
+	CellLeaderAddr string                 `protobuf:"bytes,3,opt,name=cell_leader_addr,json=cellLeaderAddr,proto3" json:"cell_leader_addr,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *CellPeer) Reset() {
+	*x = CellPeer{}
+	mi := &file_swarm_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CellPeer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CellPeer) ProtoMessage() {}
+
+func (x *CellPeer) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CellPeer.ProtoReflect.Descriptor instead.
+func (*CellPeer) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *CellPeer) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *CellPeer) GetRaftAddr() string {
+	if x != nil {
+		return x.RaftAddr
+	}
+	return ""
+}
+
+func (x *CellPeer) GetCellLeaderAddr() string {
+	if x != nil {
+		return x.CellLeaderAddr
+	}
+	return ""
+}
+
+// CellAssignmentResponse tells an agent whether it belongs to a coupled cell
+// and, if so, everything it needs to join the raft cluster and compute its
+// barrier shard. has_assignment=false => behave as a plain P0/P1 agent.
+type CellAssignmentResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	HasAssignment bool                   `protobuf:"varint,1,opt,name=has_assignment,json=hasAssignment,proto3" json:"has_assignment,omitempty"`
+	JobId         string                 `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	WorkerId      string                 `protobuf:"bytes,3,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`        // this agent's barrier WorkerID / member id
+	ShardInput    []byte                 `protobuf:"bytes,4,opt,name=shard_input,json=shardInput,proto3" json:"shard_input,omitempty"`  // this worker's DistTrainingDecompose Task.Input
+	K             int32                  `protobuf:"varint,5,opt,name=k,proto3" json:"k,omitempty"`                                     // checkpoint cadence
+	MinMembers    int32                  `protobuf:"varint,6,opt,name=min_members,json=minMembers,proto3" json:"min_members,omitempty"` // barrier floor
+	Steps         int32                  `protobuf:"varint,7,opt,name=steps,proto3" json:"steps,omitempty"`                             // N (completion)
+	Bootstrap     bool                   `protobuf:"varint,8,opt,name=bootstrap,proto3" json:"bootstrap,omitempty"`                     // exactly one agent per cell bootstraps the raft cluster
+	Peers         []*CellPeer            `protobuf:"bytes,9,rep,name=peers,proto3" json:"peers,omitempty"`                              // the full cell voter set (incl. self)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CellAssignmentResponse) Reset() {
+	*x = CellAssignmentResponse{}
+	mi := &file_swarm_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CellAssignmentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CellAssignmentResponse) ProtoMessage() {}
+
+func (x *CellAssignmentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_swarm_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CellAssignmentResponse.ProtoReflect.Descriptor instead.
+func (*CellAssignmentResponse) Descriptor() ([]byte, []int) {
+	return file_swarm_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *CellAssignmentResponse) GetHasAssignment() bool {
+	if x != nil {
+		return x.HasAssignment
+	}
+	return false
+}
+
+func (x *CellAssignmentResponse) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *CellAssignmentResponse) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
+}
+
+func (x *CellAssignmentResponse) GetShardInput() []byte {
+	if x != nil {
+		return x.ShardInput
+	}
+	return nil
+}
+
+func (x *CellAssignmentResponse) GetK() int32 {
+	if x != nil {
+		return x.K
+	}
+	return 0
+}
+
+func (x *CellAssignmentResponse) GetMinMembers() int32 {
+	if x != nil {
+		return x.MinMembers
+	}
+	return 0
+}
+
+func (x *CellAssignmentResponse) GetSteps() int32 {
+	if x != nil {
+		return x.Steps
+	}
+	return 0
+}
+
+func (x *CellAssignmentResponse) GetBootstrap() bool {
+	if x != nil {
+		return x.Bootstrap
+	}
+	return false
+}
+
+func (x *CellAssignmentResponse) GetPeers() []*CellPeer {
+	if x != nil {
+		return x.Peers
+	}
+	return nil
+}
+
 type HeartbeatRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Agent         string                 `protobuf:"bytes,1,opt,name=agent,proto3" json:"agent,omitempty"`
@@ -357,7 +593,7 @@ type HeartbeatRequest struct {
 
 func (x *HeartbeatRequest) Reset() {
 	*x = HeartbeatRequest{}
-	mi := &file_swarm_proto_msgTypes[4]
+	mi := &file_swarm_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -369,7 +605,7 @@ func (x *HeartbeatRequest) String() string {
 func (*HeartbeatRequest) ProtoMessage() {}
 
 func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[4]
+	mi := &file_swarm_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -382,7 +618,7 @@ func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{4}
+	return file_swarm_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *HeartbeatRequest) GetAgent() string {
@@ -401,7 +637,7 @@ type HeartbeatResponse struct {
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_swarm_proto_msgTypes[5]
+	mi := &file_swarm_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -413,7 +649,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[5]
+	mi := &file_swarm_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -426,7 +662,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{5}
+	return file_swarm_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *HeartbeatResponse) GetOk() bool {
@@ -448,7 +684,7 @@ type Task struct {
 
 func (x *Task) Reset() {
 	*x = Task{}
-	mi := &file_swarm_proto_msgTypes[6]
+	mi := &file_swarm_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -460,7 +696,7 @@ func (x *Task) String() string {
 func (*Task) ProtoMessage() {}
 
 func (x *Task) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[6]
+	mi := &file_swarm_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -473,7 +709,7 @@ func (x *Task) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Task.ProtoReflect.Descriptor instead.
 func (*Task) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{6}
+	return file_swarm_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Task) GetId() string {
@@ -513,7 +749,7 @@ type PullTaskRequest struct {
 
 func (x *PullTaskRequest) Reset() {
 	*x = PullTaskRequest{}
-	mi := &file_swarm_proto_msgTypes[7]
+	mi := &file_swarm_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -525,7 +761,7 @@ func (x *PullTaskRequest) String() string {
 func (*PullTaskRequest) ProtoMessage() {}
 
 func (x *PullTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[7]
+	mi := &file_swarm_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -538,7 +774,7 @@ func (x *PullTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PullTaskRequest.ProtoReflect.Descriptor instead.
 func (*PullTaskRequest) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{7}
+	return file_swarm_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *PullTaskRequest) GetAgent() string {
@@ -558,7 +794,7 @@ type PullTaskResponse struct {
 
 func (x *PullTaskResponse) Reset() {
 	*x = PullTaskResponse{}
-	mi := &file_swarm_proto_msgTypes[8]
+	mi := &file_swarm_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -570,7 +806,7 @@ func (x *PullTaskResponse) String() string {
 func (*PullTaskResponse) ProtoMessage() {}
 
 func (x *PullTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[8]
+	mi := &file_swarm_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -583,7 +819,7 @@ func (x *PullTaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PullTaskResponse.ProtoReflect.Descriptor instead.
 func (*PullTaskResponse) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{8}
+	return file_swarm_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *PullTaskResponse) GetHasTask() bool {
@@ -611,7 +847,7 @@ type ReportResultRequest struct {
 
 func (x *ReportResultRequest) Reset() {
 	*x = ReportResultRequest{}
-	mi := &file_swarm_proto_msgTypes[9]
+	mi := &file_swarm_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -623,7 +859,7 @@ func (x *ReportResultRequest) String() string {
 func (*ReportResultRequest) ProtoMessage() {}
 
 func (x *ReportResultRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[9]
+	mi := &file_swarm_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -636,7 +872,7 @@ func (x *ReportResultRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportResultRequest.ProtoReflect.Descriptor instead.
 func (*ReportResultRequest) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{9}
+	return file_swarm_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ReportResultRequest) GetTaskId() string {
@@ -669,7 +905,7 @@ type ReportResultResponse struct {
 
 func (x *ReportResultResponse) Reset() {
 	*x = ReportResultResponse{}
-	mi := &file_swarm_proto_msgTypes[10]
+	mi := &file_swarm_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -681,7 +917,7 @@ func (x *ReportResultResponse) String() string {
 func (*ReportResultResponse) ProtoMessage() {}
 
 func (x *ReportResultResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[10]
+	mi := &file_swarm_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -694,7 +930,7 @@ func (x *ReportResultResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportResultResponse.ProtoReflect.Descriptor instead.
 func (*ReportResultResponse) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{10}
+	return file_swarm_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ReportResultResponse) GetAccepted() bool {
@@ -712,7 +948,7 @@ type PsRequest struct {
 
 func (x *PsRequest) Reset() {
 	*x = PsRequest{}
-	mi := &file_swarm_proto_msgTypes[11]
+	mi := &file_swarm_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -724,7 +960,7 @@ func (x *PsRequest) String() string {
 func (*PsRequest) ProtoMessage() {}
 
 func (x *PsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[11]
+	mi := &file_swarm_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -737,7 +973,7 @@ func (x *PsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PsRequest.ProtoReflect.Descriptor instead.
 func (*PsRequest) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{11}
+	return file_swarm_proto_rawDescGZIP(), []int{14}
 }
 
 type PsResponse struct {
@@ -751,7 +987,7 @@ type PsResponse struct {
 
 func (x *PsResponse) Reset() {
 	*x = PsResponse{}
-	mi := &file_swarm_proto_msgTypes[12]
+	mi := &file_swarm_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -763,7 +999,7 @@ func (x *PsResponse) String() string {
 func (*PsResponse) ProtoMessage() {}
 
 func (x *PsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[12]
+	mi := &file_swarm_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -776,7 +1012,7 @@ func (x *PsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PsResponse.ProtoReflect.Descriptor instead.
 func (*PsResponse) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{12}
+	return file_swarm_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *PsResponse) GetCells() int32 {
@@ -809,7 +1045,7 @@ type JobStatusRequest struct {
 
 func (x *JobStatusRequest) Reset() {
 	*x = JobStatusRequest{}
-	mi := &file_swarm_proto_msgTypes[13]
+	mi := &file_swarm_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -821,7 +1057,7 @@ func (x *JobStatusRequest) String() string {
 func (*JobStatusRequest) ProtoMessage() {}
 
 func (x *JobStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[13]
+	mi := &file_swarm_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -834,7 +1070,7 @@ func (x *JobStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobStatusRequest.ProtoReflect.Descriptor instead.
 func (*JobStatusRequest) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{13}
+	return file_swarm_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *JobStatusRequest) GetJobId() string {
@@ -854,7 +1090,7 @@ type JobStatusResponse struct {
 
 func (x *JobStatusResponse) Reset() {
 	*x = JobStatusResponse{}
-	mi := &file_swarm_proto_msgTypes[14]
+	mi := &file_swarm_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -866,7 +1102,7 @@ func (x *JobStatusResponse) String() string {
 func (*JobStatusResponse) ProtoMessage() {}
 
 func (x *JobStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[14]
+	mi := &file_swarm_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -879,7 +1115,7 @@ func (x *JobStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobStatusResponse.ProtoReflect.Descriptor instead.
 func (*JobStatusResponse) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{14}
+	return file_swarm_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *JobStatusResponse) GetDone() bool {
@@ -910,7 +1146,7 @@ type JobSpec struct {
 
 func (x *JobSpec) Reset() {
 	*x = JobSpec{}
-	mi := &file_swarm_proto_msgTypes[15]
+	mi := &file_swarm_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -922,7 +1158,7 @@ func (x *JobSpec) String() string {
 func (*JobSpec) ProtoMessage() {}
 
 func (x *JobSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[15]
+	mi := &file_swarm_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -935,7 +1171,7 @@ func (x *JobSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobSpec.ProtoReflect.Descriptor instead.
 func (*JobSpec) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{15}
+	return file_swarm_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *JobSpec) GetId() string {
@@ -983,7 +1219,7 @@ type RegionalSummary struct {
 
 func (x *RegionalSummary) Reset() {
 	*x = RegionalSummary{}
-	mi := &file_swarm_proto_msgTypes[16]
+	mi := &file_swarm_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -995,7 +1231,7 @@ func (x *RegionalSummary) String() string {
 func (*RegionalSummary) ProtoMessage() {}
 
 func (x *RegionalSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[16]
+	mi := &file_swarm_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1008,7 +1244,7 @@ func (x *RegionalSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegionalSummary.ProtoReflect.Descriptor instead.
 func (*RegionalSummary) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{16}
+	return file_swarm_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *RegionalSummary) GetRegion() string {
@@ -1059,7 +1295,7 @@ type RegionView struct {
 
 func (x *RegionView) Reset() {
 	*x = RegionView{}
-	mi := &file_swarm_proto_msgTypes[17]
+	mi := &file_swarm_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1071,7 +1307,7 @@ func (x *RegionView) String() string {
 func (*RegionView) ProtoMessage() {}
 
 func (x *RegionView) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[17]
+	mi := &file_swarm_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1084,7 +1320,7 @@ func (x *RegionView) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegionView.ProtoReflect.Descriptor instead.
 func (*RegionView) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{17}
+	return file_swarm_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *RegionView) GetId() string {
@@ -1124,7 +1360,7 @@ type PublishSummaryRequest struct {
 
 func (x *PublishSummaryRequest) Reset() {
 	*x = PublishSummaryRequest{}
-	mi := &file_swarm_proto_msgTypes[18]
+	mi := &file_swarm_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1136,7 +1372,7 @@ func (x *PublishSummaryRequest) String() string {
 func (*PublishSummaryRequest) ProtoMessage() {}
 
 func (x *PublishSummaryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[18]
+	mi := &file_swarm_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1149,7 +1385,7 @@ func (x *PublishSummaryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishSummaryRequest.ProtoReflect.Descriptor instead.
 func (*PublishSummaryRequest) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{18}
+	return file_swarm_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *PublishSummaryRequest) GetSummary() *RegionalSummary {
@@ -1168,7 +1404,7 @@ type PublishSummaryResponse struct {
 
 func (x *PublishSummaryResponse) Reset() {
 	*x = PublishSummaryResponse{}
-	mi := &file_swarm_proto_msgTypes[19]
+	mi := &file_swarm_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1180,7 +1416,7 @@ func (x *PublishSummaryResponse) String() string {
 func (*PublishSummaryResponse) ProtoMessage() {}
 
 func (x *PublishSummaryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[19]
+	mi := &file_swarm_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1193,7 +1429,7 @@ func (x *PublishSummaryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishSummaryResponse.ProtoReflect.Descriptor instead.
 func (*PublishSummaryResponse) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{19}
+	return file_swarm_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *PublishSummaryResponse) GetOk() bool {
@@ -1211,7 +1447,7 @@ type GlobalViewRequest struct {
 
 func (x *GlobalViewRequest) Reset() {
 	*x = GlobalViewRequest{}
-	mi := &file_swarm_proto_msgTypes[20]
+	mi := &file_swarm_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1223,7 +1459,7 @@ func (x *GlobalViewRequest) String() string {
 func (*GlobalViewRequest) ProtoMessage() {}
 
 func (x *GlobalViewRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[20]
+	mi := &file_swarm_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1236,7 +1472,7 @@ func (x *GlobalViewRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GlobalViewRequest.ProtoReflect.Descriptor instead.
 func (*GlobalViewRequest) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{20}
+	return file_swarm_proto_rawDescGZIP(), []int{23}
 }
 
 type GlobalViewResponse struct {
@@ -1249,7 +1485,7 @@ type GlobalViewResponse struct {
 
 func (x *GlobalViewResponse) Reset() {
 	*x = GlobalViewResponse{}
-	mi := &file_swarm_proto_msgTypes[21]
+	mi := &file_swarm_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1261,7 +1497,7 @@ func (x *GlobalViewResponse) String() string {
 func (*GlobalViewResponse) ProtoMessage() {}
 
 func (x *GlobalViewResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[21]
+	mi := &file_swarm_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1274,7 +1510,7 @@ func (x *GlobalViewResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GlobalViewResponse.ProtoReflect.Descriptor instead.
 func (*GlobalViewResponse) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{21}
+	return file_swarm_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *GlobalViewResponse) GetRegions() []*RegionView {
@@ -1307,7 +1543,7 @@ type DispatchTasksRequest struct {
 
 func (x *DispatchTasksRequest) Reset() {
 	*x = DispatchTasksRequest{}
-	mi := &file_swarm_proto_msgTypes[22]
+	mi := &file_swarm_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1319,7 +1555,7 @@ func (x *DispatchTasksRequest) String() string {
 func (*DispatchTasksRequest) ProtoMessage() {}
 
 func (x *DispatchTasksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[22]
+	mi := &file_swarm_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1332,7 +1568,7 @@ func (x *DispatchTasksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DispatchTasksRequest.ProtoReflect.Descriptor instead.
 func (*DispatchTasksRequest) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{22}
+	return file_swarm_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *DispatchTasksRequest) GetJob() *JobSpec {
@@ -1366,7 +1602,7 @@ type DispatchTasksResponse struct {
 
 func (x *DispatchTasksResponse) Reset() {
 	*x = DispatchTasksResponse{}
-	mi := &file_swarm_proto_msgTypes[23]
+	mi := &file_swarm_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1378,7 +1614,7 @@ func (x *DispatchTasksResponse) String() string {
 func (*DispatchTasksResponse) ProtoMessage() {}
 
 func (x *DispatchTasksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[23]
+	mi := &file_swarm_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1391,7 +1627,7 @@ func (x *DispatchTasksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DispatchTasksResponse.ProtoReflect.Descriptor instead.
 func (*DispatchTasksResponse) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{23}
+	return file_swarm_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DispatchTasksResponse) GetAccepted() bool {
@@ -1425,7 +1661,7 @@ type PartialAggregate struct {
 
 func (x *PartialAggregate) Reset() {
 	*x = PartialAggregate{}
-	mi := &file_swarm_proto_msgTypes[24]
+	mi := &file_swarm_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1437,7 +1673,7 @@ func (x *PartialAggregate) String() string {
 func (*PartialAggregate) ProtoMessage() {}
 
 func (x *PartialAggregate) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[24]
+	mi := &file_swarm_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1450,7 +1686,7 @@ func (x *PartialAggregate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PartialAggregate.ProtoReflect.Descriptor instead.
 func (*PartialAggregate) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{24}
+	return file_swarm_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *PartialAggregate) GetJobId() string {
@@ -1497,7 +1733,7 @@ type ReportPartialRequest struct {
 
 func (x *ReportPartialRequest) Reset() {
 	*x = ReportPartialRequest{}
-	mi := &file_swarm_proto_msgTypes[25]
+	mi := &file_swarm_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1509,7 +1745,7 @@ func (x *ReportPartialRequest) String() string {
 func (*ReportPartialRequest) ProtoMessage() {}
 
 func (x *ReportPartialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[25]
+	mi := &file_swarm_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1522,7 +1758,7 @@ func (x *ReportPartialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportPartialRequest.ProtoReflect.Descriptor instead.
 func (*ReportPartialRequest) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{25}
+	return file_swarm_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ReportPartialRequest) GetPartial() *PartialAggregate {
@@ -1541,7 +1777,7 @@ type ReportPartialResponse struct {
 
 func (x *ReportPartialResponse) Reset() {
 	*x = ReportPartialResponse{}
-	mi := &file_swarm_proto_msgTypes[26]
+	mi := &file_swarm_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1553,7 +1789,7 @@ func (x *ReportPartialResponse) String() string {
 func (*ReportPartialResponse) ProtoMessage() {}
 
 func (x *ReportPartialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[26]
+	mi := &file_swarm_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1566,7 +1802,7 @@ func (x *ReportPartialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportPartialResponse.ProtoReflect.Descriptor instead.
 func (*ReportPartialResponse) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{26}
+	return file_swarm_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ReportPartialResponse) GetOk() bool {
@@ -1590,7 +1826,7 @@ type AssignWorkRequest struct {
 
 func (x *AssignWorkRequest) Reset() {
 	*x = AssignWorkRequest{}
-	mi := &file_swarm_proto_msgTypes[27]
+	mi := &file_swarm_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1602,7 +1838,7 @@ func (x *AssignWorkRequest) String() string {
 func (*AssignWorkRequest) ProtoMessage() {}
 
 func (x *AssignWorkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[27]
+	mi := &file_swarm_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1615,7 +1851,7 @@ func (x *AssignWorkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignWorkRequest.ProtoReflect.Descriptor instead.
 func (*AssignWorkRequest) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{27}
+	return file_swarm_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *AssignWorkRequest) GetJobId() string {
@@ -1655,7 +1891,7 @@ type AssignWorkResponse struct {
 
 func (x *AssignWorkResponse) Reset() {
 	*x = AssignWorkResponse{}
-	mi := &file_swarm_proto_msgTypes[28]
+	mi := &file_swarm_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1667,7 +1903,7 @@ func (x *AssignWorkResponse) String() string {
 func (*AssignWorkResponse) ProtoMessage() {}
 
 func (x *AssignWorkResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[28]
+	mi := &file_swarm_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1680,7 +1916,7 @@ func (x *AssignWorkResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignWorkResponse.ProtoReflect.Descriptor instead.
 func (*AssignWorkResponse) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{28}
+	return file_swarm_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *AssignWorkResponse) GetAccepted() bool {
@@ -1705,7 +1941,7 @@ type StepReportRequest struct {
 
 func (x *StepReportRequest) Reset() {
 	*x = StepReportRequest{}
-	mi := &file_swarm_proto_msgTypes[29]
+	mi := &file_swarm_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1717,7 +1953,7 @@ func (x *StepReportRequest) String() string {
 func (*StepReportRequest) ProtoMessage() {}
 
 func (x *StepReportRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[29]
+	mi := &file_swarm_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1730,7 +1966,7 @@ func (x *StepReportRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepReportRequest.ProtoReflect.Descriptor instead.
 func (*StepReportRequest) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{29}
+	return file_swarm_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *StepReportRequest) GetJobId() string {
@@ -1770,7 +2006,7 @@ type StepReportResponse struct {
 
 func (x *StepReportResponse) Reset() {
 	*x = StepReportResponse{}
-	mi := &file_swarm_proto_msgTypes[30]
+	mi := &file_swarm_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1782,7 +2018,7 @@ func (x *StepReportResponse) String() string {
 func (*StepReportResponse) ProtoMessage() {}
 
 func (x *StepReportResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[30]
+	mi := &file_swarm_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1795,7 +2031,7 @@ func (x *StepReportResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepReportResponse.ProtoReflect.Descriptor instead.
 func (*StepReportResponse) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{30}
+	return file_swarm_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *StepReportResponse) GetOk() bool {
@@ -1820,7 +2056,7 @@ type DeliverMessageRequest struct {
 
 func (x *DeliverMessageRequest) Reset() {
 	*x = DeliverMessageRequest{}
-	mi := &file_swarm_proto_msgTypes[31]
+	mi := &file_swarm_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1832,7 +2068,7 @@ func (x *DeliverMessageRequest) String() string {
 func (*DeliverMessageRequest) ProtoMessage() {}
 
 func (x *DeliverMessageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[31]
+	mi := &file_swarm_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1845,7 +2081,7 @@ func (x *DeliverMessageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeliverMessageRequest.ProtoReflect.Descriptor instead.
 func (*DeliverMessageRequest) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{31}
+	return file_swarm_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *DeliverMessageRequest) GetJobId() string {
@@ -1885,7 +2121,7 @@ type DeliverMessageResponse struct {
 
 func (x *DeliverMessageResponse) Reset() {
 	*x = DeliverMessageResponse{}
-	mi := &file_swarm_proto_msgTypes[32]
+	mi := &file_swarm_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1897,7 +2133,7 @@ func (x *DeliverMessageResponse) String() string {
 func (*DeliverMessageResponse) ProtoMessage() {}
 
 func (x *DeliverMessageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[32]
+	mi := &file_swarm_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1910,7 +2146,7 @@ func (x *DeliverMessageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeliverMessageResponse.ProtoReflect.Descriptor instead.
 func (*DeliverMessageResponse) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{32}
+	return file_swarm_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *DeliverMessageResponse) GetOk() bool {
@@ -1935,7 +2171,7 @@ type MemberHeartbeatRequest struct {
 
 func (x *MemberHeartbeatRequest) Reset() {
 	*x = MemberHeartbeatRequest{}
-	mi := &file_swarm_proto_msgTypes[33]
+	mi := &file_swarm_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1947,7 +2183,7 @@ func (x *MemberHeartbeatRequest) String() string {
 func (*MemberHeartbeatRequest) ProtoMessage() {}
 
 func (x *MemberHeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[33]
+	mi := &file_swarm_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1960,7 +2196,7 @@ func (x *MemberHeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemberHeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*MemberHeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{33}
+	return file_swarm_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *MemberHeartbeatRequest) GetJobId() string {
@@ -1986,7 +2222,7 @@ type MemberHeartbeatResponse struct {
 
 func (x *MemberHeartbeatResponse) Reset() {
 	*x = MemberHeartbeatResponse{}
-	mi := &file_swarm_proto_msgTypes[34]
+	mi := &file_swarm_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1998,7 +2234,7 @@ func (x *MemberHeartbeatResponse) String() string {
 func (*MemberHeartbeatResponse) ProtoMessage() {}
 
 func (x *MemberHeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_swarm_proto_msgTypes[34]
+	mi := &file_swarm_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2011,7 +2247,7 @@ func (x *MemberHeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemberHeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*MemberHeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_swarm_proto_rawDescGZIP(), []int{34}
+	return file_swarm_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *MemberHeartbeatResponse) GetOk() bool {
@@ -2034,15 +2270,35 @@ const file_swarm_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"*\n" +
 	"\x11SubmitJobResponse\x12\x15\n" +
-	"\x06job_id\x18\x01 \x01(\tR\x05jobId\"T\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\"\x9b\x01\n" +
 	"\x10JoinAgentRequest\x12\x14\n" +
 	"\x05agent\x18\x01 \x01(\tR\x05agent\x12\x16\n" +
 	"\x06region\x18\x02 \x01(\tR\x06region\x12\x12\n" +
-	"\x04caps\x18\x03 \x01(\x05R\x04caps\"`\n" +
+	"\x04caps\x18\x03 \x01(\x05R\x04caps\x12\x1b\n" +
+	"\traft_addr\x18\x04 \x01(\tR\braftAddr\x12(\n" +
+	"\x10cell_leader_addr\x18\x05 \x01(\tR\x0ecellLeaderAddr\"`\n" +
 	"\x11JoinAgentResponse\x12\x17\n" +
 	"\acell_id\x18\x01 \x01(\tR\x06cellId\x12\x1a\n" +
 	"\baccepted\x18\x02 \x01(\bR\baccepted\x12\x16\n" +
-	"\x06reason\x18\x03 \x01(\tR\x06reason\"(\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\"-\n" +
+	"\x15CellAssignmentRequest\x12\x14\n" +
+	"\x05agent\x18\x01 \x01(\tR\x05agent\"l\n" +
+	"\bCellPeer\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1b\n" +
+	"\traft_addr\x18\x02 \x01(\tR\braftAddr\x12(\n" +
+	"\x10cell_leader_addr\x18\x03 \x01(\tR\x0ecellLeaderAddr\"\xa1\x02\n" +
+	"\x16CellAssignmentResponse\x12%\n" +
+	"\x0ehas_assignment\x18\x01 \x01(\bR\rhasAssignment\x12\x15\n" +
+	"\x06job_id\x18\x02 \x01(\tR\x05jobId\x12\x1b\n" +
+	"\tworker_id\x18\x03 \x01(\tR\bworkerId\x12\x1f\n" +
+	"\vshard_input\x18\x04 \x01(\fR\n" +
+	"shardInput\x12\f\n" +
+	"\x01k\x18\x05 \x01(\x05R\x01k\x12\x1f\n" +
+	"\vmin_members\x18\x06 \x01(\x05R\n" +
+	"minMembers\x12\x14\n" +
+	"\x05steps\x18\a \x01(\x05R\x05steps\x12\x1c\n" +
+	"\tbootstrap\x18\b \x01(\bR\tbootstrap\x12(\n" +
+	"\x05peers\x18\t \x03(\v2\x12.swarm.v1.CellPeerR\x05peers\"(\n" +
 	"\x10HeartbeatRequest\x12\x14\n" +
 	"\x05agent\x18\x01 \x01(\tR\x05agent\"#\n" +
 	"\x11HeartbeatResponse\x12\x0e\n" +
@@ -2155,7 +2411,7 @@ const file_swarm_proto_rawDesc = "" +
 	"\x06Health\x12\x12\n" +
 	"\x0eHEALTH_HEALTHY\x10\x00\x12\x13\n" +
 	"\x0fHEALTH_DEGRADED\x10\x01\x12\x16\n" +
-	"\x12HEALTH_UNREACHABLE\x10\x022\xbb\x04\n" +
+	"\x12HEALTH_UNREACHABLE\x10\x022\x90\x05\n" +
 	"\fControlPlane\x12D\n" +
 	"\tSubmitJob\x12\x1a.swarm.v1.SubmitJobRequest\x1a\x1b.swarm.v1.SubmitJobResponse\x12D\n" +
 	"\tJoinAgent\x12\x1a.swarm.v1.JoinAgentRequest\x1a\x1b.swarm.v1.JoinAgentResponse\x12D\n" +
@@ -2164,7 +2420,8 @@ const file_swarm_proto_rawDesc = "" +
 	"\fReportResult\x12\x1d.swarm.v1.ReportResultRequest\x1a\x1e.swarm.v1.ReportResultResponse\x12/\n" +
 	"\x02Ps\x12\x13.swarm.v1.PsRequest\x1a\x14.swarm.v1.PsResponse\x12D\n" +
 	"\tJobStatus\x12\x1a.swarm.v1.JobStatusRequest\x1a\x1b.swarm.v1.JobStatusResponse\x12P\n" +
-	"\rDispatchTasks\x12\x1e.swarm.v1.DispatchTasksRequest\x1a\x1f.swarm.v1.DispatchTasksResponse2\x8a\x03\n" +
+	"\rDispatchTasks\x12\x1e.swarm.v1.DispatchTasksRequest\x1a\x1f.swarm.v1.DispatchTasksResponse\x12S\n" +
+	"\x0eCellAssignment\x12\x1f.swarm.v1.CellAssignmentRequest\x1a .swarm.v1.CellAssignmentResponse2\x8a\x03\n" +
 	"\fGlobalRouter\x12A\n" +
 	"\x06Submit\x12\x1a.swarm.v1.SubmitJobRequest\x1a\x1b.swarm.v1.SubmitJobResponse\x12S\n" +
 	"\x0ePublishSummary\x12\x1f.swarm.v1.PublishSummaryRequest\x1a .swarm.v1.PublishSummaryResponse\x12J\n" +
@@ -2193,7 +2450,7 @@ func file_swarm_proto_rawDescGZIP() []byte {
 }
 
 var file_swarm_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_swarm_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_swarm_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
 var file_swarm_proto_goTypes = []any{
 	(Coupling)(0),                   // 0: swarm.v1.Coupling
 	(Health)(0),                     // 1: swarm.v1.Health
@@ -2201,92 +2458,98 @@ var file_swarm_proto_goTypes = []any{
 	(*SubmitJobResponse)(nil),       // 3: swarm.v1.SubmitJobResponse
 	(*JoinAgentRequest)(nil),        // 4: swarm.v1.JoinAgentRequest
 	(*JoinAgentResponse)(nil),       // 5: swarm.v1.JoinAgentResponse
-	(*HeartbeatRequest)(nil),        // 6: swarm.v1.HeartbeatRequest
-	(*HeartbeatResponse)(nil),       // 7: swarm.v1.HeartbeatResponse
-	(*Task)(nil),                    // 8: swarm.v1.Task
-	(*PullTaskRequest)(nil),         // 9: swarm.v1.PullTaskRequest
-	(*PullTaskResponse)(nil),        // 10: swarm.v1.PullTaskResponse
-	(*ReportResultRequest)(nil),     // 11: swarm.v1.ReportResultRequest
-	(*ReportResultResponse)(nil),    // 12: swarm.v1.ReportResultResponse
-	(*PsRequest)(nil),               // 13: swarm.v1.PsRequest
-	(*PsResponse)(nil),              // 14: swarm.v1.PsResponse
-	(*JobStatusRequest)(nil),        // 15: swarm.v1.JobStatusRequest
-	(*JobStatusResponse)(nil),       // 16: swarm.v1.JobStatusResponse
-	(*JobSpec)(nil),                 // 17: swarm.v1.JobSpec
-	(*RegionalSummary)(nil),         // 18: swarm.v1.RegionalSummary
-	(*RegionView)(nil),              // 19: swarm.v1.RegionView
-	(*PublishSummaryRequest)(nil),   // 20: swarm.v1.PublishSummaryRequest
-	(*PublishSummaryResponse)(nil),  // 21: swarm.v1.PublishSummaryResponse
-	(*GlobalViewRequest)(nil),       // 22: swarm.v1.GlobalViewRequest
-	(*GlobalViewResponse)(nil),      // 23: swarm.v1.GlobalViewResponse
-	(*DispatchTasksRequest)(nil),    // 24: swarm.v1.DispatchTasksRequest
-	(*DispatchTasksResponse)(nil),   // 25: swarm.v1.DispatchTasksResponse
-	(*PartialAggregate)(nil),        // 26: swarm.v1.PartialAggregate
-	(*ReportPartialRequest)(nil),    // 27: swarm.v1.ReportPartialRequest
-	(*ReportPartialResponse)(nil),   // 28: swarm.v1.ReportPartialResponse
-	(*AssignWorkRequest)(nil),       // 29: swarm.v1.AssignWorkRequest
-	(*AssignWorkResponse)(nil),      // 30: swarm.v1.AssignWorkResponse
-	(*StepReportRequest)(nil),       // 31: swarm.v1.StepReportRequest
-	(*StepReportResponse)(nil),      // 32: swarm.v1.StepReportResponse
-	(*DeliverMessageRequest)(nil),   // 33: swarm.v1.DeliverMessageRequest
-	(*DeliverMessageResponse)(nil),  // 34: swarm.v1.DeliverMessageResponse
-	(*MemberHeartbeatRequest)(nil),  // 35: swarm.v1.MemberHeartbeatRequest
-	(*MemberHeartbeatResponse)(nil), // 36: swarm.v1.MemberHeartbeatResponse
-	nil,                             // 37: swarm.v1.SubmitJobRequest.ParamsEntry
-	nil,                             // 38: swarm.v1.JobSpec.ParamsEntry
+	(*CellAssignmentRequest)(nil),   // 6: swarm.v1.CellAssignmentRequest
+	(*CellPeer)(nil),                // 7: swarm.v1.CellPeer
+	(*CellAssignmentResponse)(nil),  // 8: swarm.v1.CellAssignmentResponse
+	(*HeartbeatRequest)(nil),        // 9: swarm.v1.HeartbeatRequest
+	(*HeartbeatResponse)(nil),       // 10: swarm.v1.HeartbeatResponse
+	(*Task)(nil),                    // 11: swarm.v1.Task
+	(*PullTaskRequest)(nil),         // 12: swarm.v1.PullTaskRequest
+	(*PullTaskResponse)(nil),        // 13: swarm.v1.PullTaskResponse
+	(*ReportResultRequest)(nil),     // 14: swarm.v1.ReportResultRequest
+	(*ReportResultResponse)(nil),    // 15: swarm.v1.ReportResultResponse
+	(*PsRequest)(nil),               // 16: swarm.v1.PsRequest
+	(*PsResponse)(nil),              // 17: swarm.v1.PsResponse
+	(*JobStatusRequest)(nil),        // 18: swarm.v1.JobStatusRequest
+	(*JobStatusResponse)(nil),       // 19: swarm.v1.JobStatusResponse
+	(*JobSpec)(nil),                 // 20: swarm.v1.JobSpec
+	(*RegionalSummary)(nil),         // 21: swarm.v1.RegionalSummary
+	(*RegionView)(nil),              // 22: swarm.v1.RegionView
+	(*PublishSummaryRequest)(nil),   // 23: swarm.v1.PublishSummaryRequest
+	(*PublishSummaryResponse)(nil),  // 24: swarm.v1.PublishSummaryResponse
+	(*GlobalViewRequest)(nil),       // 25: swarm.v1.GlobalViewRequest
+	(*GlobalViewResponse)(nil),      // 26: swarm.v1.GlobalViewResponse
+	(*DispatchTasksRequest)(nil),    // 27: swarm.v1.DispatchTasksRequest
+	(*DispatchTasksResponse)(nil),   // 28: swarm.v1.DispatchTasksResponse
+	(*PartialAggregate)(nil),        // 29: swarm.v1.PartialAggregate
+	(*ReportPartialRequest)(nil),    // 30: swarm.v1.ReportPartialRequest
+	(*ReportPartialResponse)(nil),   // 31: swarm.v1.ReportPartialResponse
+	(*AssignWorkRequest)(nil),       // 32: swarm.v1.AssignWorkRequest
+	(*AssignWorkResponse)(nil),      // 33: swarm.v1.AssignWorkResponse
+	(*StepReportRequest)(nil),       // 34: swarm.v1.StepReportRequest
+	(*StepReportResponse)(nil),      // 35: swarm.v1.StepReportResponse
+	(*DeliverMessageRequest)(nil),   // 36: swarm.v1.DeliverMessageRequest
+	(*DeliverMessageResponse)(nil),  // 37: swarm.v1.DeliverMessageResponse
+	(*MemberHeartbeatRequest)(nil),  // 38: swarm.v1.MemberHeartbeatRequest
+	(*MemberHeartbeatResponse)(nil), // 39: swarm.v1.MemberHeartbeatResponse
+	nil,                             // 40: swarm.v1.SubmitJobRequest.ParamsEntry
+	nil,                             // 41: swarm.v1.JobSpec.ParamsEntry
 }
 var file_swarm_proto_depIdxs = []int32{
 	0,  // 0: swarm.v1.SubmitJobRequest.coupling:type_name -> swarm.v1.Coupling
-	37, // 1: swarm.v1.SubmitJobRequest.params:type_name -> swarm.v1.SubmitJobRequest.ParamsEntry
-	8,  // 2: swarm.v1.PullTaskResponse.task:type_name -> swarm.v1.Task
-	0,  // 3: swarm.v1.JobSpec.coupling:type_name -> swarm.v1.Coupling
-	38, // 4: swarm.v1.JobSpec.params:type_name -> swarm.v1.JobSpec.ParamsEntry
-	1,  // 5: swarm.v1.RegionalSummary.health:type_name -> swarm.v1.Health
-	1,  // 6: swarm.v1.RegionView.health:type_name -> swarm.v1.Health
-	18, // 7: swarm.v1.PublishSummaryRequest.summary:type_name -> swarm.v1.RegionalSummary
-	19, // 8: swarm.v1.GlobalViewResponse.regions:type_name -> swarm.v1.RegionView
-	17, // 9: swarm.v1.DispatchTasksRequest.job:type_name -> swarm.v1.JobSpec
-	8,  // 10: swarm.v1.DispatchTasksRequest.tasks:type_name -> swarm.v1.Task
-	26, // 11: swarm.v1.ReportPartialRequest.partial:type_name -> swarm.v1.PartialAggregate
-	2,  // 12: swarm.v1.ControlPlane.SubmitJob:input_type -> swarm.v1.SubmitJobRequest
-	4,  // 13: swarm.v1.ControlPlane.JoinAgent:input_type -> swarm.v1.JoinAgentRequest
-	6,  // 14: swarm.v1.ControlPlane.Heartbeat:input_type -> swarm.v1.HeartbeatRequest
-	9,  // 15: swarm.v1.ControlPlane.PullTask:input_type -> swarm.v1.PullTaskRequest
-	11, // 16: swarm.v1.ControlPlane.ReportResult:input_type -> swarm.v1.ReportResultRequest
-	13, // 17: swarm.v1.ControlPlane.Ps:input_type -> swarm.v1.PsRequest
-	15, // 18: swarm.v1.ControlPlane.JobStatus:input_type -> swarm.v1.JobStatusRequest
-	24, // 19: swarm.v1.ControlPlane.DispatchTasks:input_type -> swarm.v1.DispatchTasksRequest
-	2,  // 20: swarm.v1.GlobalRouter.Submit:input_type -> swarm.v1.SubmitJobRequest
-	20, // 21: swarm.v1.GlobalRouter.PublishSummary:input_type -> swarm.v1.PublishSummaryRequest
-	22, // 22: swarm.v1.GlobalRouter.GetGlobalView:input_type -> swarm.v1.GlobalViewRequest
-	27, // 23: swarm.v1.GlobalRouter.ReportPartial:input_type -> swarm.v1.ReportPartialRequest
-	15, // 24: swarm.v1.GlobalRouter.JobStatus:input_type -> swarm.v1.JobStatusRequest
-	29, // 25: swarm.v1.CellLeader.AssignWork:input_type -> swarm.v1.AssignWorkRequest
-	31, // 26: swarm.v1.CellLeader.StepReport:input_type -> swarm.v1.StepReportRequest
-	33, // 27: swarm.v1.CellLeader.DeliverMessage:input_type -> swarm.v1.DeliverMessageRequest
-	35, // 28: swarm.v1.CellLeader.MemberHeartbeat:input_type -> swarm.v1.MemberHeartbeatRequest
-	3,  // 29: swarm.v1.ControlPlane.SubmitJob:output_type -> swarm.v1.SubmitJobResponse
-	5,  // 30: swarm.v1.ControlPlane.JoinAgent:output_type -> swarm.v1.JoinAgentResponse
-	7,  // 31: swarm.v1.ControlPlane.Heartbeat:output_type -> swarm.v1.HeartbeatResponse
-	10, // 32: swarm.v1.ControlPlane.PullTask:output_type -> swarm.v1.PullTaskResponse
-	12, // 33: swarm.v1.ControlPlane.ReportResult:output_type -> swarm.v1.ReportResultResponse
-	14, // 34: swarm.v1.ControlPlane.Ps:output_type -> swarm.v1.PsResponse
-	16, // 35: swarm.v1.ControlPlane.JobStatus:output_type -> swarm.v1.JobStatusResponse
-	25, // 36: swarm.v1.ControlPlane.DispatchTasks:output_type -> swarm.v1.DispatchTasksResponse
-	3,  // 37: swarm.v1.GlobalRouter.Submit:output_type -> swarm.v1.SubmitJobResponse
-	21, // 38: swarm.v1.GlobalRouter.PublishSummary:output_type -> swarm.v1.PublishSummaryResponse
-	23, // 39: swarm.v1.GlobalRouter.GetGlobalView:output_type -> swarm.v1.GlobalViewResponse
-	28, // 40: swarm.v1.GlobalRouter.ReportPartial:output_type -> swarm.v1.ReportPartialResponse
-	16, // 41: swarm.v1.GlobalRouter.JobStatus:output_type -> swarm.v1.JobStatusResponse
-	30, // 42: swarm.v1.CellLeader.AssignWork:output_type -> swarm.v1.AssignWorkResponse
-	32, // 43: swarm.v1.CellLeader.StepReport:output_type -> swarm.v1.StepReportResponse
-	34, // 44: swarm.v1.CellLeader.DeliverMessage:output_type -> swarm.v1.DeliverMessageResponse
-	36, // 45: swarm.v1.CellLeader.MemberHeartbeat:output_type -> swarm.v1.MemberHeartbeatResponse
-	29, // [29:46] is the sub-list for method output_type
-	12, // [12:29] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	40, // 1: swarm.v1.SubmitJobRequest.params:type_name -> swarm.v1.SubmitJobRequest.ParamsEntry
+	7,  // 2: swarm.v1.CellAssignmentResponse.peers:type_name -> swarm.v1.CellPeer
+	11, // 3: swarm.v1.PullTaskResponse.task:type_name -> swarm.v1.Task
+	0,  // 4: swarm.v1.JobSpec.coupling:type_name -> swarm.v1.Coupling
+	41, // 5: swarm.v1.JobSpec.params:type_name -> swarm.v1.JobSpec.ParamsEntry
+	1,  // 6: swarm.v1.RegionalSummary.health:type_name -> swarm.v1.Health
+	1,  // 7: swarm.v1.RegionView.health:type_name -> swarm.v1.Health
+	21, // 8: swarm.v1.PublishSummaryRequest.summary:type_name -> swarm.v1.RegionalSummary
+	22, // 9: swarm.v1.GlobalViewResponse.regions:type_name -> swarm.v1.RegionView
+	20, // 10: swarm.v1.DispatchTasksRequest.job:type_name -> swarm.v1.JobSpec
+	11, // 11: swarm.v1.DispatchTasksRequest.tasks:type_name -> swarm.v1.Task
+	29, // 12: swarm.v1.ReportPartialRequest.partial:type_name -> swarm.v1.PartialAggregate
+	2,  // 13: swarm.v1.ControlPlane.SubmitJob:input_type -> swarm.v1.SubmitJobRequest
+	4,  // 14: swarm.v1.ControlPlane.JoinAgent:input_type -> swarm.v1.JoinAgentRequest
+	9,  // 15: swarm.v1.ControlPlane.Heartbeat:input_type -> swarm.v1.HeartbeatRequest
+	12, // 16: swarm.v1.ControlPlane.PullTask:input_type -> swarm.v1.PullTaskRequest
+	14, // 17: swarm.v1.ControlPlane.ReportResult:input_type -> swarm.v1.ReportResultRequest
+	16, // 18: swarm.v1.ControlPlane.Ps:input_type -> swarm.v1.PsRequest
+	18, // 19: swarm.v1.ControlPlane.JobStatus:input_type -> swarm.v1.JobStatusRequest
+	27, // 20: swarm.v1.ControlPlane.DispatchTasks:input_type -> swarm.v1.DispatchTasksRequest
+	6,  // 21: swarm.v1.ControlPlane.CellAssignment:input_type -> swarm.v1.CellAssignmentRequest
+	2,  // 22: swarm.v1.GlobalRouter.Submit:input_type -> swarm.v1.SubmitJobRequest
+	23, // 23: swarm.v1.GlobalRouter.PublishSummary:input_type -> swarm.v1.PublishSummaryRequest
+	25, // 24: swarm.v1.GlobalRouter.GetGlobalView:input_type -> swarm.v1.GlobalViewRequest
+	30, // 25: swarm.v1.GlobalRouter.ReportPartial:input_type -> swarm.v1.ReportPartialRequest
+	18, // 26: swarm.v1.GlobalRouter.JobStatus:input_type -> swarm.v1.JobStatusRequest
+	32, // 27: swarm.v1.CellLeader.AssignWork:input_type -> swarm.v1.AssignWorkRequest
+	34, // 28: swarm.v1.CellLeader.StepReport:input_type -> swarm.v1.StepReportRequest
+	36, // 29: swarm.v1.CellLeader.DeliverMessage:input_type -> swarm.v1.DeliverMessageRequest
+	38, // 30: swarm.v1.CellLeader.MemberHeartbeat:input_type -> swarm.v1.MemberHeartbeatRequest
+	3,  // 31: swarm.v1.ControlPlane.SubmitJob:output_type -> swarm.v1.SubmitJobResponse
+	5,  // 32: swarm.v1.ControlPlane.JoinAgent:output_type -> swarm.v1.JoinAgentResponse
+	10, // 33: swarm.v1.ControlPlane.Heartbeat:output_type -> swarm.v1.HeartbeatResponse
+	13, // 34: swarm.v1.ControlPlane.PullTask:output_type -> swarm.v1.PullTaskResponse
+	15, // 35: swarm.v1.ControlPlane.ReportResult:output_type -> swarm.v1.ReportResultResponse
+	17, // 36: swarm.v1.ControlPlane.Ps:output_type -> swarm.v1.PsResponse
+	19, // 37: swarm.v1.ControlPlane.JobStatus:output_type -> swarm.v1.JobStatusResponse
+	28, // 38: swarm.v1.ControlPlane.DispatchTasks:output_type -> swarm.v1.DispatchTasksResponse
+	8,  // 39: swarm.v1.ControlPlane.CellAssignment:output_type -> swarm.v1.CellAssignmentResponse
+	3,  // 40: swarm.v1.GlobalRouter.Submit:output_type -> swarm.v1.SubmitJobResponse
+	24, // 41: swarm.v1.GlobalRouter.PublishSummary:output_type -> swarm.v1.PublishSummaryResponse
+	26, // 42: swarm.v1.GlobalRouter.GetGlobalView:output_type -> swarm.v1.GlobalViewResponse
+	31, // 43: swarm.v1.GlobalRouter.ReportPartial:output_type -> swarm.v1.ReportPartialResponse
+	19, // 44: swarm.v1.GlobalRouter.JobStatus:output_type -> swarm.v1.JobStatusResponse
+	33, // 45: swarm.v1.CellLeader.AssignWork:output_type -> swarm.v1.AssignWorkResponse
+	35, // 46: swarm.v1.CellLeader.StepReport:output_type -> swarm.v1.StepReportResponse
+	37, // 47: swarm.v1.CellLeader.DeliverMessage:output_type -> swarm.v1.DeliverMessageResponse
+	39, // 48: swarm.v1.CellLeader.MemberHeartbeat:output_type -> swarm.v1.MemberHeartbeatResponse
+	31, // [31:49] is the sub-list for method output_type
+	13, // [13:31] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_swarm_proto_init() }
@@ -2300,7 +2563,7 @@ func file_swarm_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_swarm_proto_rawDesc), len(file_swarm_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   37,
+			NumMessages:   40,
 			NumExtensions: 0,
 			NumServices:   3,
 		},
