@@ -170,6 +170,12 @@ type Config struct {
 	// refresh the cached health map. Defaults to 2s. Ignored when
 	// GlobalRouter is empty.
 	GlobalViewInterval time.Duration
+
+	// Follower configures P2 coupled-cell follower mode (issue #96). Leaving
+	// it zero-valued (Follower.Listen == "") disables it entirely — the
+	// agent then behaves exactly like a P0/P1 agent, matching every existing
+	// Config in this package.
+	Follower FollowerConfig
 }
 
 func (c Config) withDefaults() Config {
@@ -191,6 +197,7 @@ func (c Config) withDefaults() Config {
 	if c.GlobalViewInterval <= 0 {
 		c.GlobalViewInterval = defaultGlobalViewInterval
 	}
+	c.Follower = c.Follower.withDefaults()
 	return c
 }
 
@@ -219,6 +226,9 @@ type Agent struct {
 	// property named directly in the ticket — observable from tests in this
 	// package without adding any RPC the proto does not define.
 	enrolls int
+	// followerAddr is the address the follower's CellLeader server actually
+	// bound, once serveFollower has bound it. See FollowerAddr.
+	followerAddr string
 }
 
 // New constructs an Agent from cfg, applying defaults for any field the
@@ -236,21 +246,25 @@ func New(cfg Config) *Agent {
 	return a
 }
 
-// Run drives the registration loop, the task-runner loop, and (in
-// multi-region mode) the global-view poller until ctx is done or one of them
-// returns a non-cancellation error, in which case Run cancels the others and
-// returns that error.
+// Run drives the registration loop, the task-runner loop, the (in
+// multi-region mode) global-view poller, and the P2 follower loop until ctx
+// is done or one of them returns a non-cancellation error, in which case Run
+// cancels the others and returns that error. The follower loop is inert
+// unless Config.Follower.Listen is set (see runFollower) — a plain P0/P1
+// Config runs exactly the first two loops in substance.
 func (a *Agent) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	errCh := make(chan error, 3)
+	const loops = 4
+	errCh := make(chan error, loops)
 	go func() { errCh <- a.runRegistration(ctx) }()
 	go func() { errCh <- a.runRunner(ctx) }()
 	go func() { errCh <- a.runGlobalView(ctx) }()
+	go func() { errCh <- a.runFollower(ctx) }()
 
 	var firstErr error
-	for i := 0; i < 3; i++ {
+	for i := 0; i < loops; i++ {
 		if err := <-errCh; err != nil && !errors.Is(err, context.Canceled) && firstErr == nil {
 			firstErr = err
 			cancel()

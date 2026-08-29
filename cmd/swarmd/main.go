@@ -55,6 +55,7 @@ func runAgent(args []string) error {
 	peerRegions := fs.String("peer-regions", "", "comma-separated peer RegionIDs in nearest-first order (cross-region failover only)")
 	regionTargets := fs.String("region-targets", "", "comma-separated region=host:port pairs mapping a RegionID to its control-plane dial address (cross-region failover only)")
 	globalRouter := fs.String("global-router", "", "GlobalRouter dial address polled for cross-region health; empty disables cross-region failover")
+	cellLeaderListen := fs.String("cell-leader-listen", "", "address to bind this agent's P2 CellLeader AssignWork server on; empty (the default) disables coupled-cell follower mode entirely")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -76,6 +77,7 @@ func runAgent(args []string) error {
 	if *exec != "" {
 		cfg.Process.Argv = strings.Fields(*exec)
 	}
+	cfg.Follower.Listen = *cellLeaderListen
 
 	if err := configureFailover(&cfg, *homeRegion, *peerRegions, *regionTargets, *globalRouter); err != nil {
 		return err
