@@ -148,15 +148,29 @@ func (a *Agent) execDial(ctx context.Context) (agentreg.RegEvent, bool, []agentr
 	return agentreg.DialOK, true, nil, nil
 }
 
+// execJoinCell sends the actual JoinAgent RPC. It advertises this agent's
+// configured raft/cell-leader listeners (CellLeaderConfig.RaftListen,
+// FollowerConfig.Listen) on EVERY JoinAgent — including the very first one,
+// before any CellAssignment ever arrives (issue #109). This closes the
+// circular dependency #98's activateCoupledCellLocked otherwise hits: it
+// needs an agent's raft_addr/cell_leader_addr to build a coupled cell's raft
+// peer set, but a CellAssignment can't exist yet to gate advertising them (as
+// advertiseFollower/advertiseRaftAddr do post-assignment). The agent later
+// binds these exact same configured addresses (cell.NewNode's BindAddr,
+// serveFollower's net.Listen), so advertised == actual from the start. A
+// plain P0/P1 agent leaves both configs empty, so this sends the same empty
+// strings it always has — byte-for-byte unchanged behavior.
 func (a *Agent) execJoinCell(ctx context.Context) (agentreg.RegEvent, bool, []agentreg.Command, error) {
 	client, err := a.clients.get(ctx)
 	if err != nil {
 		return 0, false, nil, err
 	}
 	resp, err := client.JoinAgent(ctx, &transport.JoinAgentRequest{
-		Agent:  a.cfg.AgentID,
-		Region: a.cfg.Region,
-		Caps:   a.cfg.Caps,
+		Agent:          a.cfg.AgentID,
+		Region:         a.cfg.Region,
+		Caps:           a.cfg.Caps,
+		RaftAddr:       a.cfg.CellLeader.RaftListen,
+		CellLeaderAddr: a.cfg.Follower.Listen,
 	})
 	if err != nil || !resp.Accepted {
 		return agentreg.ConnLost, true, nil, nil
