@@ -34,6 +34,11 @@ func TestTransportExecutor_AllReduceFoldCheckpoint(t *testing.T) {
 	var gotResults map[string][]byte
 	store := NewMemCheckpointStore()
 
+	// The state OpCheckpoint must snapshot — TransportExecutor.State is
+	// typically a *Loop's State method; a plain closure over a fixed value
+	// exercises the same wiring without needing a full Loop here.
+	current := barrier.State{Step: 2, K: 2, Members: []barrier.WorkerID{"a", "b"}, MinMembers: 2}
+
 	e := &TransportExecutor{
 		JobID: "job-1",
 		AllReduce: func(_ context.Context, partials map[barrier.WorkerID][]byte) error {
@@ -45,6 +50,8 @@ func TestTransportExecutor_AllReduceFoldCheckpoint(t *testing.T) {
 			return nil
 		},
 		Checkpoint: store,
+		Driver:     BarrierDriver{},
+		State:      func() State { return current },
 	}
 
 	cmds := []Command{
@@ -65,6 +72,29 @@ func TestTransportExecutor_AllReduceFoldCheckpoint(t *testing.T) {
 	ckpt, ok := store.Last("job-1")
 	if !ok || ckpt.Step != 2 {
 		t.Fatalf("Checkpoint stored = (%#v, %v), want Step=2", ckpt, ok)
+	}
+	if len(ckpt.DriverBlob) == 0 {
+		t.Fatalf("Checkpoint.DriverBlob is empty — OpCheckpoint must call Driver.Snapshot(State()), see #69's follow-up audit")
+	}
+	got := (BarrierDriver{}).Resume(nil, ckpt)
+	if !reflect.DeepEqual(got, current) {
+		t.Fatalf("decoding the stored DriverBlob = %#v, want %#v", got, current)
+	}
+}
+
+// TestTransportExecutor_Checkpoint_NoDriverOrState asserts the documented
+// degradation: leaving Driver or State unset writes a Step-only checkpoint
+// (DriverBlob nil) rather than panicking.
+func TestTransportExecutor_Checkpoint_NoDriverOrState(t *testing.T) {
+	store := NewMemCheckpointStore()
+	e := &TransportExecutor{JobID: "job-1", Checkpoint: store}
+
+	if err := e.Exec(context.Background(), []Command{{Op: OpCheckpoint, Step: 5}}); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	ckpt, ok := store.Last("job-1")
+	if !ok || ckpt.Step != 5 || ckpt.DriverBlob != nil {
+		t.Fatalf("Checkpoint stored = (%#v, %v), want Step=5, DriverBlob=nil", ckpt, ok)
 	}
 }
 

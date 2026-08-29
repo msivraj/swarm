@@ -41,6 +41,21 @@ type TransportExecutor struct {
 	// Checkpoint persists OpCheckpoint via a CheckpointStore (nil is a
 	// no-op).
 	Checkpoint CheckpointStore
+
+	// Driver and State together supply OpCheckpoint's payload: Driver.Snapshot
+	// of State() is written into checkpoint.State.DriverBlob (alongside
+	// c.Step) so a later Resume(log, ckpt) has a driver state to decode
+	// before folding the post-checkpoint log forward — Resume seeds its base
+	// state FROM DriverBlob, and the log alone cannot re-supply it (it never
+	// carries the full state, only deltas — see e.g. applyBarrierCommand).
+	// State is typically a *Loop's State method, called at OpCheckpoint
+	// execution time, which is after Loop.Handle has already folded the
+	// triggering event into the driver's next state. Either being nil
+	// degrades to Step-only checkpoint (DriverBlob nil) rather than a panic,
+	// matching this Executor's other hooks' nil-is-no-op convention — but a
+	// production wiring that leaves them unset cannot recover on failover.
+	Driver Driver
+	State  func() State
 }
 
 var _ Executor = (*TransportExecutor)(nil)
@@ -81,7 +96,11 @@ func (e *TransportExecutor) execOne(ctx context.Context, c Command) error {
 		if e.Checkpoint == nil {
 			return nil
 		}
-		return e.Checkpoint.Put(e.JobID, checkpoint.State{Step: c.Step})
+		var blob []byte
+		if e.Driver != nil && e.State != nil {
+			blob = e.Driver.Snapshot(e.State())
+		}
+		return e.Checkpoint.Put(e.JobID, checkpoint.State{Step: c.Step, DriverBlob: blob})
 	case OpSend:
 		return e.deliver(ctx, c.Send)
 	default:
