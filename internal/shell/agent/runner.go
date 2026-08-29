@@ -107,20 +107,33 @@ func (a *Agent) execExecute(ctx context.Context, task model.Task) ([]corerunner.
 // reports ok=false for a missing Argv, a spawn error, or a non-zero exit —
 // the shell's Execute -> Done/Failed boundary.
 func (a *Agent) runProcess(ctx context.Context, task model.Task) (model.TaskResult, bool) {
+	out, ok := a.execProcess(ctx, task.Input)
+	if !ok {
+		return model.TaskResult{}, false
+	}
+	return model.TaskResult{TaskID: task.ID, Output: out, OK: true}, true
+}
+
+// execProcess spawns cfg.Process.Argv, piping in to its stdin and capturing
+// stdout verbatim. It reports ok=false for a missing Argv, a spawn error, or
+// a non-zero exit. runProcess wraps this for the P0/P1 task runner (Task ->
+// TaskResult); followerServer.AssignWork (issue #96) uses it directly as the
+// default Follower.Worker, D5's exec-once-per-step model.
+func (a *Agent) execProcess(ctx context.Context, in []byte) ([]byte, bool) {
 	argv := a.cfg.Process.Argv
 	if len(argv) == 0 {
-		return model.TaskResult{}, false
+		return nil, false
 	}
 
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // Argv is operator-configured, not attacker input
-	cmd.Stdin = bytes.NewReader(task.Input)
+	cmd.Stdin = bytes.NewReader(in)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 
 	if err := cmd.Run(); err != nil {
-		return model.TaskResult{}, false
+		return nil, false
 	}
-	return model.TaskResult{TaskID: task.ID, Output: stdout.Bytes(), OK: true}, true
+	return stdout.Bytes(), true
 }
 
 func (a *Agent) execReport(ctx context.Context, result model.TaskResult) error {
