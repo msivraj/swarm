@@ -24,8 +24,44 @@ message SubmitJobRequest {
 }
 message SubmitJobResponse { string job_id = 1; }
 
-message JoinAgentRequest { string agent = 1; string region = 2; int32 caps = 3; }
+// JoinAgentRequest: raft_addr and cell_leader_addr are the agent's two P2
+// listeners, advertised so a coupled cell can form its raft cluster and the
+// elected leader can reach it. Both empty for a P0/P1 agent that never joins a
+// coupled cell — existing JoinAgent behavior is unchanged.
+message JoinAgentRequest {
+  string agent = 1;
+  string region = 2;
+  int32 caps = 3;
+  string raft_addr = 4; // TCP address this agent's raft NetworkTransport advertises
+  string cell_leader_addr = 5; // this agent's CellLeader gRPC address
+}
 message JoinAgentResponse { string cell_id = 1; bool accepted = 2; string reason = 3; }
+
+// ---- P2 coupled-cell activation (agent polls its assignment; additive) ----
+
+message CellAssignmentRequest { string agent = 1; }
+
+// CellPeer is one voter in a coupled cell's raft cluster.
+message CellPeer {
+  string agent_id = 1;
+  string raft_addr = 2;
+  string cell_leader_addr = 3;
+}
+
+// CellAssignmentResponse tells an agent whether it belongs to a coupled cell
+// and, if so, everything it needs to join the raft cluster and compute its
+// barrier shard. has_assignment=false => behave as a plain P0/P1 agent.
+message CellAssignmentResponse {
+  bool has_assignment = 1;
+  string job_id = 2;
+  string worker_id = 3; // this agent's barrier WorkerID / member id
+  bytes shard_input = 4; // this worker's DistTrainingDecompose Task.Input
+  int32 k = 5; // checkpoint cadence
+  int32 min_members = 6; // barrier floor
+  int32 steps = 7; // N (completion)
+  bool bootstrap = 8; // exactly one agent per cell bootstraps the raft cluster
+  repeated CellPeer peers = 9; // the full cell voter set (incl. self)
+}
 
 message HeartbeatRequest { string agent = 1; }
 message HeartbeatResponse { bool ok = 1; }
@@ -122,6 +158,9 @@ service ControlPlane {
   rpc JobStatus(JobStatusRequest) returns (JobStatusResponse);
   // Cross-region task delivery: global->region (spread) and region->region (spill).
   rpc DispatchTasks(DispatchTasksRequest) returns (DispatchTasksResponse);
+  // A cell agent polls whether it belongs to a coupled cell and, if so, its
+  // raft peer set + barrier shard (P2 coupled-cell activation).
+  rpc CellAssignment(CellAssignmentRequest) returns (CellAssignmentResponse);
 }
 
 // GlobalRouter is the P1 global routing layer (S3): it holds the merged
