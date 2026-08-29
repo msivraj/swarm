@@ -53,6 +53,15 @@ const (
 	EventMessage
 	// EventCrash — message-passing: an actor crashed.
 	EventCrash
+	// EventAggregate — message-passing: the shell decided a step boundary
+	// has arrived (issue #73's msgpass/agent-sim combine wiring) and asks
+	// the driver to gather every currently-tracked actor's state for
+	// combining. messagepassing has no global step of its own (see that
+	// package's doc) — unlike barrier's Deadline or leader's RoundTimeout,
+	// which core itself decides — so this "step" boundary is entirely the
+	// shell's call (a timer, a job-level cadence, ...); the driver only
+	// gathers what it already has when asked.
+	EventAggregate
 )
 
 // Event is the shell-level event Loop.Handle feeds to whichever Driver is
@@ -75,6 +84,8 @@ type Event struct {
 	// message-passing: EventMessage, EventCrash
 	Message messagepassing.Message // EventMessage
 	Crashed messagepassing.ActorID // EventCrash
+	// EventAggregate carries no fields: the driver gathers whatever actor
+	// states it is already tracking (see EventAggregate's doc above).
 }
 
 // CmdOp tags Command's sum type: the union of every hosted driver's command
@@ -112,6 +123,10 @@ const (
 	OpSend
 	// OpRestart — message-passing: restart Restart (optionally FromSnapshot).
 	OpRestart
+	// OpAggregate — message-passing: combine every currently-tracked actor's
+	// state (AggregateStates), issue #73's msgpass/agent-sim combine wiring
+	// — see EventAggregate.
+	OpAggregate
 )
 
 // Command is a description of an effect Loop's Executor will carry out.
@@ -142,8 +157,19 @@ type Command struct {
 	// replicated log entry (React itself never returns it) so Resume can
 	// rebuild MessagePassingState.Actors from the command log alone; see
 	// adapter_messagepassing.go.
-	FoldedActor  messagepassing.Actor
-	FromSnapshot bool // OpRestart
+	FoldedActor     messagepassing.Actor
+	FromSnapshot    bool                              // OpRestart
+	AggregateStates map[messagepassing.ActorID][]byte // OpAggregate
+
+	// Combined is issue #73's driver->template combine wiring's output:
+	// the pure template combine (internal/core/templates) applied to this
+	// command's gathered per-worker payloads (Partials for OpAllReduce,
+	// Results for OpFold, AggregateStates for OpAggregate). nil until a
+	// CombiningDriver (combine.go) fills it in — a plain BarrierDriver/
+	// LeaderDriver/MessagePassingDriver never sets this field, matching
+	// every other Command field these adapters populate only when they have
+	// something to say.
+	Combined []byte // OpAllReduce, OpFold, OpAggregate
 }
 
 // State is the opaque driver state Loop threads through Handle calls. Loop

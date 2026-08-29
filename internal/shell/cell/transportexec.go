@@ -14,12 +14,21 @@ import (
 // leader, and message-passing Commands against followers over the
 // CellLeader transport (issue #68) — AssignWork to hand out a step/superstep
 // (barrier's Release, leader's Advance/Reassign), and DeliverMessage to
-// deliver a Send. The remaining Ops (AllReduce, Checkpoint, Fold, Evict,
-// Rollback, Stall, Fail, Restart) are local shell decisions this ticket
-// surfaces as injectable hooks rather than RPCs — issue #68's CellLeader
-// surface only names AssignWork/StepReport/DeliverMessage/MemberHeartbeat,
-// and StepReport/MemberHeartbeat are inbound to the leader (see server.go),
-// not something this Executor calls out.
+// deliver a Send. The remaining Ops (AllReduce, Checkpoint, Fold, Aggregate,
+// Evict, Rollback, Stall, Fail, Restart) are local shell decisions this
+// ticket surfaces as injectable hooks rather than RPCs — issue #68's
+// CellLeader surface only names AssignWork/StepReport/DeliverMessage/
+// MemberHeartbeat, and StepReport/MemberHeartbeat are inbound to the leader
+// (see server.go), not something this Executor calls out.
+//
+// Issue #73 wires AssignWork's payload for OpRelease/OpAdvance to a
+// preceding OpAllReduce/OpFold/OpAggregate command's Combined bytes (see
+// Exec below) — the driver->template combine's result, gathered and reduced
+// by a CombiningDriver (combine.go) BEFORE this Executor ever sees the
+// commands. AllReduce/Fold/Aggregate below stay raw-payload hooks (their
+// existing, tested shape): a caller wanting the actual collective transport
+// (NCCL/custom — the GPU device shell, issue #74) or its own persistence for
+// the ungathered per-worker payloads still gets them unchanged.
 type TransportExecutor struct {
 	JobID string
 
@@ -37,6 +46,10 @@ type TransportExecutor struct {
 
 	// Fold carries out OpFold (nil is a no-op).
 	Fold func(ctx context.Context, results map[string][]byte) error
+
+	// Aggregate carries out OpAggregate — message-passing's combine op,
+	// issue #73's msgpass/agent-sim wiring (nil is a no-op).
+	Aggregate func(ctx context.Context, states map[string][]byte) error
 
 	// Checkpoint persists OpCheckpoint via a CheckpointStore (nil is a
 	// no-op).
@@ -60,22 +73,34 @@ type TransportExecutor struct {
 
 var _ Executor = (*TransportExecutor)(nil)
 
-// Exec executes cmds in order, stopping at the first error.
+// Exec executes cmds in order, stopping at the first error. It also carries
+// out issue #73's "distribute the combined result back to followers": the
+// most recent OpAllReduce/OpFold/OpAggregate command's Combined bytes (set
+// by a CombiningDriver, combine.go — nil if cmds was never run through one)
+// become the payload of the very next OpRelease/OpAdvance's AssignWork
+// calls, matching barrier's own command ordering (AllReduce -> [Checkpoint]
+// -> Release, same batch, decision A in barrier.go) and leader's (Fold ->
+// Advance, decision A in leader.go).
 func (e *TransportExecutor) Exec(ctx context.Context, cmds []Command) error {
+	var combined []byte
 	for _, c := range cmds {
-		if err := e.execOne(ctx, c); err != nil {
+		switch c.Op {
+		case OpAllReduce, OpFold, OpAggregate:
+			combined = c.Combined
+		}
+		if err := e.execOne(ctx, c, combined); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (e *TransportExecutor) execOne(ctx context.Context, c Command) error {
+func (e *TransportExecutor) execOne(ctx context.Context, c Command, combined []byte) error {
 	switch c.Op {
 	case OpRelease:
-		return e.assignAll(ctx, c.Step, nil)
+		return e.assignAll(ctx, c.Step, combined)
 	case OpAdvance:
-		return e.assignAll(ctx, c.Superstep, nil)
+		return e.assignAll(ctx, c.Superstep, combined)
 	case OpReassign:
 		return e.assignOne(ctx, string(c.Follower), 0, c.Work)
 	case OpAllReduce:
@@ -92,6 +117,15 @@ func (e *TransportExecutor) execOne(ctx context.Context, c Command) error {
 			results[string(f)] = r
 		}
 		return e.Fold(ctx, results)
+	case OpAggregate:
+		if e.Aggregate == nil {
+			return nil
+		}
+		states := make(map[string][]byte, len(c.AggregateStates))
+		for a, s := range c.AggregateStates {
+			states[string(a)] = s
+		}
+		return e.Aggregate(ctx, states)
 	case OpCheckpoint:
 		if e.Checkpoint == nil {
 			return nil
