@@ -27,10 +27,20 @@ func (s *Server) SubmitJob(_ context.Context, req *transport.SubmitJobRequest) (
 	s.mu.Unlock()
 
 	spec := model.JobSpec{
-		ID:       jobID,
-		Template: req.GetTemplate(),
-		Coupling: fromProtoCoupling(req.GetCoupling()),
-		Params:   req.GetParams(),
+		ID:         jobID,
+		Template:   req.GetTemplate(),
+		Coupling:   fromProtoCoupling(req.GetCoupling()),
+		Params:     req.GetParams(),
+		MinMembers: parseMinMembers(req.GetParams()),
+	}
+
+	// A gang job (MinMembers > 0, B4) takes a different admission path
+	// entirely — admission.AdmitGang's all-or-nothing Place/Wait decision,
+	// atomically reserved or queued by submitGang (see gang.go, #71) —
+	// rather than admission.Admit's single-job template decomposition,
+	// which P0/P1 gate to Independent coupling only.
+	if spec.MinMembers > 0 {
+		return s.submitGang(spec)
 	}
 
 	tasks, rej := admission.Admit(spec)
@@ -89,6 +99,9 @@ func (s *Server) JoinAgent(_ context.Context, req *transport.JoinAgentRequest) (
 		if err := s.drainPendingLocked(); err != nil {
 			return nil, status.Errorf(codes.Internal, "place pending tasks: %v", err)
 		}
+		// Same capacity-change retry for the gang pending queue (#71): a cell
+		// gaining capacity may now be enough for the gang waiting at its head.
+		s.retryPendingGangsLocked()
 		return &transport.JoinAgentResponse{CellId: string(decision.Cell), Accepted: true}, nil
 
 	case rendezvous.NewCell:
@@ -105,6 +118,9 @@ func (s *Server) JoinAgent(_ context.Context, req *transport.JoinAgentRequest) (
 		if err := s.drainPendingLocked(); err != nil {
 			return nil, status.Errorf(codes.Internal, "place pending tasks: %v", err)
 		}
+		// Same capacity-change retry for the gang pending queue (#71): a
+		// brand-new cell may itself be, or complete, what a queued gang needs.
+		s.retryPendingGangsLocked()
 		return &transport.JoinAgentResponse{CellId: string(cellID), Accepted: true}, nil
 
 	default:
