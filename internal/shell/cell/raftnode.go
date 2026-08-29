@@ -115,6 +115,18 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 // wired into Loop.Apply on the elected leader.
 func (n *Node) Apply(cmds []Command) error { return n.apply(cmds) }
 
+// Barrier blocks until every log entry committed as of this call has been
+// applied to this node's own FSM (hashicorp/raft's standard "read your own
+// writes" idiom). A newly-elected leader's raft LOG is guaranteed at least
+// as up to date as any voter that elected it (raft's election safety
+// property), but FSM.Apply — the in-memory command log Log()/Resume read —
+// runs on a separate internal apply loop that can still be a step behind at
+// the exact instant LeaderCh fires true. A caller that reads Log() (issue
+// #100's failover: rebuilding State via Driver.Resume) immediately on
+// becoming leader, without this Barrier first, can observe a log missing
+// its own most recently committed entries.
+func (n *Node) Barrier(timeout time.Duration) error { return n.Raft.Barrier(timeout).Error() }
+
 // Log returns the FSM's replicated command log, for Driver.Resume.
 func (n *Node) Log() []Command { return n.FSM.Log() }
 

@@ -236,6 +236,15 @@ type Agent struct {
 	// followerAddr is the address the follower's CellLeader server actually
 	// bound, once serveFollower has bound it. See FollowerAddr.
 	followerAddr string
+	// cellLeaderHost is the LeaderHost runCellLeader constructs, once this
+	// agent has joined the cell's raft cluster (issue #100's resilience
+	// wiring). Exposing it (CellLeaderHost) lets a caller — production or a
+	// test — observe this term's straggler-eviction/stall status
+	// (LeaderHost.Status/StallInfo/Evicted) or the raft node it hosts
+	// (LeaderHost.Node) without a dedicated RPC for either. Set once per
+	// runCellLeader call; nil for an agent that never configures CellLeader,
+	// or before it has joined the cluster.
+	cellLeaderHost *LeaderHost
 }
 
 // New constructs an Agent from cfg, applying defaults for any field the
@@ -342,6 +351,24 @@ func (a *Agent) EnrollCount() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.enrolls
+}
+
+// setCellLeaderHost / CellLeaderHost record and expose the LeaderHost
+// runCellLeader constructs once this agent has joined its cell's raft
+// cluster. See cellLeaderHost's doc for why this exists.
+func (a *Agent) setCellLeaderHost(h *LeaderHost) {
+	a.mu.Lock()
+	a.cellLeaderHost = h
+	a.mu.Unlock()
+}
+
+// CellLeaderHost returns the LeaderHost this agent constructed for its cell's
+// raft cluster, or nil if it has never joined one (CellLeader.RaftListen
+// unset, or runCellLeader has not reached joinCellRaft yet).
+func (a *Agent) CellLeaderHost() *LeaderHost {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.cellLeaderHost
 }
 
 // clientHolder holds the currently connected ControlPlaneClient, if any.

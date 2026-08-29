@@ -32,15 +32,25 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/hashicorp/raft"
 	"google.golang.org/grpc"
 
 	"github.com/msivraj/swarm/internal/core/barrier"
+	"github.com/msivraj/swarm/internal/core/detection"
 	"github.com/msivraj/swarm/internal/model"
 	"github.com/msivraj/swarm/internal/shell/cell"
 	"github.com/msivraj/swarm/internal/shell/transport"
 )
+
+// defaultStragglerInterval is how often watchStragglers re-checks the
+// current step's not-yet-Done members against detection.Deadline when
+// CellLeaderConfig/LeaderHost leaves StragglerInterval unset — frequent
+// enough that a straggler is caught within a small fraction of even
+// detection's fastest table entry (Core+Barrier, 2s), without adding
+// meaningful overhead (the check itself is a handful of map reads).
+const defaultStragglerInterval = 200 * time.Millisecond
 
 // leaderRaftNode is the subset of *cell.Node's surface (issue #95) the
 // leader host depends on: replicate a command batch, read back the
@@ -110,6 +120,12 @@ type CellLeaderConfig struct {
 	// production node); tests substitute a fake implementing the narrow
 	// leaderRaftNode surface instead of a real TCP raft cluster.
 	NewRaftNode func(cfg cell.NodeConfig) (leaderRaftNode, error)
+
+	// StragglerInterval is how often the elected leader's straggler-eviction
+	// timer (issue #100, LeaderHost.watchStragglers) re-checks the current
+	// step's not-yet-Done members against internal/core/detection's
+	// tier/coupling deadline. Defaults to defaultStragglerInterval.
+	StragglerInterval time.Duration
 }
 
 func (c CellLeaderConfig) withDefaults() CellLeaderConfig {
@@ -130,6 +146,9 @@ func (c CellLeaderConfig) withDefaults() CellLeaderConfig {
 	}
 	if c.NewRaftNode == nil {
 		c.NewRaftNode = func(cfg cell.NodeConfig) (leaderRaftNode, error) { return cell.NewNode(cfg) }
+	}
+	if c.StragglerInterval <= 0 {
+		c.StragglerInterval = defaultStragglerInterval
 	}
 	return c
 }
@@ -159,16 +178,18 @@ func (a *Agent) runCellLeader(ctx context.Context) error {
 	defer cleanup()
 
 	host := &LeaderHost{
-		Node:       node,
-		Assignment: assignment,
-		Listen:     a.cfg.CellLeader.Listen,
-		Dialer:     a.cfg.CellLeader.Dialer,
-		Checkpoint: a.cfg.CellLeader.Checkpoint,
-		Template:   a.cfg.CellLeader.Template,
-		Registry:   a.cfg.CellLeader.Registry,
-		Now:        a.now,
-		Report:     a.reportCoupledCompletion,
+		Node:              node,
+		Assignment:        assignment,
+		Listen:            a.cfg.CellLeader.Listen,
+		Dialer:            a.cfg.CellLeader.Dialer,
+		Checkpoint:        a.cfg.CellLeader.Checkpoint,
+		Template:          a.cfg.CellLeader.Template,
+		Registry:          a.cfg.CellLeader.Registry,
+		StragglerInterval: a.cfg.CellLeader.StragglerInterval,
+		Now:               a.now,
+		Report:            a.reportCoupledCompletion,
 	}
+	a.setCellLeaderHost(host)
 	return host.run(ctx)
 }
 
@@ -277,6 +298,11 @@ type LeaderHost struct {
 	Registry   cell.CombineRegistry
 	Now        func() model.Instant
 
+	// StragglerInterval is how often the straggler-eviction timer
+	// (watchStragglers, issue #100) re-checks the current step's not-yet-Done
+	// members. Defaults to defaultStragglerInterval.
+	StragglerInterval time.Duration
+
 	// Report delivers jobID's final combined gradient once the assignment's
 	// last step completes (D6). Required for completion to be observable —
 	// a nil Report just skips the notification, still stopping the loop.
@@ -285,14 +311,26 @@ type LeaderHost struct {
 	initOnce sync.Once
 	peerAddr map[string]string
 
-	mu       sync.Mutex
-	loop     *cell.Loop
-	srv      *cell.Server
-	grpcSrv  *grpc.Server
-	lis      net.Listener
-	dialCtx  context.Context
-	conns    map[string]*dialedConn
-	doneOnce sync.Once
+	mu         sync.Mutex
+	loop       *cell.Loop
+	srv        *cell.Server
+	grpcSrv    *grpc.Server
+	lis        net.Listener
+	dialCtx    context.Context
+	conns      map[string]*dialedConn
+	doneOnce   sync.Once
+	termCancel context.CancelFunc // stops this term's watchStragglers goroutine
+
+	// evicted, stalled, stallHave, stallNeed, stallRollback are this term's
+	// straggler-eviction/stall bookkeeping (issue #100), written only by
+	// recordDeadlineOutcome and read by Evicted/StallInfo/Status. reset by
+	// resetTermStatus at the start of every term so a later term never
+	// inherits an earlier one's status.
+	evicted       []string
+	stalled       bool
+	stallHave     int
+	stallNeed     int
+	stallRollback bool
 }
 
 // init applies defaults and precomputes the peer -> cell_leader_addr lookup
@@ -317,6 +355,9 @@ func (h *LeaderHost) init() {
 		}
 		if h.Now == nil {
 			h.Now = func() model.Instant { return 0 }
+		}
+		if h.StragglerInterval <= 0 {
+			h.StragglerInterval = defaultStragglerInterval
 		}
 		peers := h.Assignment.GetPeers()
 		h.peerAddr = make(map[string]string, len(peers))
@@ -359,6 +400,34 @@ func (h *LeaderHost) run(ctx context.Context) error {
 	}
 }
 
+// raftFSMBarrierTimeout bounds awaitFSMCaughtUp's wait for this term's raft
+// FSM to catch up to its own already-committed log before Resume reads it —
+// generous because it is a real raft round trip (issue #100), never hit in
+// the ordinary case where the FSM is already caught up by the time
+// LeaderCh fires.
+const raftFSMBarrierTimeout = 10 * time.Second
+
+// awaitFSMCaughtUp blocks (via node.Barrier, if node implements it) until
+// every log entry committed as of this call has been applied to node's own
+// FSM — see cell.Node.Barrier's doc for why this matters: a newly-elected
+// leader's raft LOG is guaranteed up to date, but FSM.Apply can still lag it
+// by one internal apply-loop cycle at the exact instant LeaderCh fires, and
+// buildState's Resume(Node.Log(), ...) call right after this would otherwise
+// risk rebuilding State from a log missing its own most recent entries
+// (issue #100's failover scenario surfaced this against a REAL raft
+// cluster — the fake raft node #102's own unit tests use has no such lag,
+// since its Apply is synchronous, so it does not implement Barrier and this
+// is a no-op for it).
+func awaitFSMCaughtUp(node leaderRaftNode) error {
+	barrier, ok := node.(interface {
+		Barrier(timeout time.Duration) error
+	})
+	if !ok {
+		return nil
+	}
+	return barrier.Barrier(raftFSMBarrierTimeout)
+}
+
 // onBecomeLeader constructs (or, on a later leadership transition,
 // re-Resumes) the barrier.State, builds the production Loop wired exactly
 // as the #90 regression guard requires (Driver AND State both set on the
@@ -372,6 +441,10 @@ func (h *LeaderHost) onBecomeLeader(ctx context.Context) error {
 	h.mu.Unlock()
 	if alreadyHosting {
 		return nil
+	}
+
+	if err := awaitFSMCaughtUp(h.Node); err != nil {
+		return fmt.Errorf("cell leader: await FSM catch-up: %w", err)
 	}
 
 	lis, err := net.Listen("tcp", h.Listen)
@@ -410,11 +483,19 @@ func (h *LeaderHost) onBecomeLeader(ctx context.Context) error {
 	grpcSrv := grpc.NewServer()
 	transport.RegisterCellLeaderServer(grpcSrv, srv)
 
+	// termCtx bounds this term's straggler-eviction timer (issue #100): it
+	// is cancelled — independent of the outer ctx — the moment this term
+	// ends, from onLoseLeadership, so a stale term's timer never fires
+	// against a NEW term's (freshly rebuilt) loop/srv.
+	termCtx, termCancel := context.WithCancel(ctx)
+
+	h.resetTermStatus()
 	h.mu.Lock()
-	h.loop, h.srv, h.grpcSrv, h.lis, h.dialCtx = loop, srv, grpcSrv, lis, ctx
+	h.loop, h.srv, h.grpcSrv, h.lis, h.dialCtx, h.termCancel = loop, srv, grpcSrv, lis, ctx, termCancel
 	h.mu.Unlock()
 
 	go func() { _ = grpcSrv.Serve(lis) }()
+	go h.watchStragglers(termCtx, loop, srv)
 
 	payload := combinedForStep(h.Node.Log(), bs.Step)
 	return loop.Exec.Exec(ctx, []cell.Command{
@@ -423,23 +504,201 @@ func (h *LeaderHost) onBecomeLeader(ctx context.Context) error {
 	})
 }
 
-// onLoseLeadership tears down this term's Loop/server/dial cache. It is
-// idempotent — safe to call from run's "no longer leader" branch, from a
-// completed term's own async cleanup (finish), and from run's deferred
-// shutdown, in any order or combination.
+// onLoseLeadership tears down this term's Loop/server/dial cache/straggler
+// timer. It is idempotent — safe to call from run's "no longer leader"
+// branch, from a completed term's own async cleanup (finish), and from run's
+// deferred shutdown, in any order or combination.
 func (h *LeaderHost) onLoseLeadership() {
 	h.mu.Lock()
 	grpcSrv := h.grpcSrv
 	conns := h.conns
-	h.loop, h.srv, h.grpcSrv, h.lis, h.dialCtx, h.conns = nil, nil, nil, nil, nil, nil
+	termCancel := h.termCancel
+	h.loop, h.srv, h.grpcSrv, h.lis, h.dialCtx, h.conns, h.termCancel = nil, nil, nil, nil, nil, nil, nil
 	h.mu.Unlock()
 
+	if termCancel != nil {
+		termCancel()
+	}
 	if grpcSrv != nil {
 		grpcSrv.GracefulStop()
 	}
 	for _, c := range conns {
 		_ = c.closer.Close()
 	}
+}
+
+// resetTermStatus clears this term's straggler-eviction/stall bookkeeping —
+// called once per onBecomeLeader so a NEW term never inherits a PRIOR term's
+// stale Evicted/StallInfo.
+func (h *LeaderHost) resetTermStatus() {
+	h.mu.Lock()
+	h.evicted = nil
+	h.stalled = false
+	h.stallHave, h.stallNeed = 0, 0
+	h.stallRollback = false
+	h.mu.Unlock()
+}
+
+// watchStragglers is issue #100's straggler-eviction timer: on a real
+// wall-clock tick (StragglerInterval), it checks every current-step member
+// that has not yet reported Done against internal/core/detection's
+// tier/coupling deadline table, evaluated against cell.Server's LastSeen (or,
+// for a member this term has never heard from, this term's own start
+// instant — the only lastSeen a brand-new term has for it). The first tick to
+// find any such member overdue synthesizes exactly one EventDeadline into
+// loop — barrier's own stepDeadline (internal/core/barrier.go) evicts every
+// member that has not reported Done for the current step and, if survivors
+// remain and are all Done, completes the step in the same fold (decision C);
+// under the MinMembers floor, falling short instead rolls back and stalls
+// (decision G). This timer does not need to choose between "straggler
+// eviction" and "min_members floor" — it always fires the same EventDeadline
+// and lets barrier's own step decide which applies.
+//
+// Resolved ambiguity: CellAssignmentResponse carries no Tier field (the
+// coupled-cell wire protocol predates O4's adaptive-by-tier detection), so
+// this ticket pins every cell-leader-hosted barrier to model.Core (the
+// trusted, low-latency tier real cells run on) — Core+Barrier is
+// detection's fastest table entry (2s), matching the phase doc's "core +
+// barrier in seconds" pin.
+//
+// Once a Deadline fold ever produces OpStall or OpFail, this goroutine
+// stops: barrier has parked the run under the floor (or given up), and
+// re-checking a since-reset Step against members that have not been
+// re-assigned work yet (no refill/resume wiring exists for a stalled
+// barrier — issue #100 escalates that piece as a follow-up) would misread
+// "not yet re-assigned" as "still overdue" and evict survivors that were
+// never actually stragglers, cascading the whole membership toward zero.
+// Stopping here keeps this timer's blast radius the one behavior issue #100
+// actually asks for: evict, or stall-and-park — never a runaway collapse.
+func (h *LeaderHost) watchStragglers(ctx context.Context, loop *cell.Loop, srv *cell.Server) {
+	interval := h.StragglerInterval
+	if interval <= 0 {
+		interval = defaultStragglerInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	termStart := h.Now()
+	firedStep := -1
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		bs, ok := loop.State().(barrier.State)
+		if !ok || bs.Failed || bs.Step == firedStep {
+			continue
+		}
+
+		now := h.Now()
+		if !anyOverdue(bs, srv, termStart, now) {
+			continue
+		}
+		firedStep = bs.Step
+
+		cmds, err := loop.Handle(ctx, cell.Event{Kind: cell.EventDeadline}, now)
+		if err != nil {
+			return
+		}
+		if h.recordDeadlineOutcome(cmds) {
+			return // OpStall/OpFail observed — see the doc above.
+		}
+	}
+}
+
+// anyOverdue reports whether any of bs's current-step members that have not
+// yet reported Done is past its detection.Deadline, evaluated against srv's
+// LastSeen (or termStart, for a member this term has never heard from).
+func anyOverdue(bs barrier.State, srv *cell.Server, termStart, now model.Instant) bool {
+	for _, w := range bs.Members {
+		if _, done := bs.Partials[w]; done {
+			continue
+		}
+		lastSeen, seen := srv.LastSeen(string(w))
+		if !seen {
+			lastSeen = termStart
+		}
+		dl := lastSeen + model.Instant(detection.Deadline(model.Core, model.Barrier))
+		if detection.IsDead(lastSeen, dl, now) {
+			return true
+		}
+	}
+	return false
+}
+
+// recordDeadlineOutcome folds cmds (the commands an EventDeadline fold just
+// produced) into this term's observable status — Evicted for every OpEvict,
+// StallInfo for an OpStall (always paired with an OpRollback per barrier's
+// own stall(), recorded here from the actual commands rather than assumed).
+// It returns true iff cmds contained OpStall or OpFail, telling
+// watchStragglers to stop (see its doc).
+func (h *LeaderHost) recordDeadlineOutcome(cmds []cell.Command) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	terminal := false
+	for _, c := range cmds {
+		switch c.Op {
+		case cell.OpEvict:
+			h.evicted = append(h.evicted, string(c.Worker))
+		case cell.OpRollback:
+			h.stallRollback = true
+		case cell.OpStall:
+			h.stalled = true
+			h.stallHave, h.stallNeed = c.Have, c.Need
+			terminal = true
+		case cell.OpFail:
+			terminal = true
+		}
+	}
+	return terminal
+}
+
+// Evicted returns the barrier worker ids this term's straggler-eviction
+// timer has evicted so far, in eviction order.
+func (h *LeaderHost) Evicted() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]string, len(h.evicted))
+	copy(out, h.evicted)
+	return out
+}
+
+// StallInfo is this term's MinMembers-floor stall status (issue #100's
+// "stalled: have/need" status-surfacing acceptance criterion).
+type StallInfo struct {
+	Stalled bool
+	Have    int
+	Need    int
+	// Rollback is true iff an OpRollback command accompanied the Stall —
+	// barrier's own stall() always pairs them (internal/core/barrier.go); this
+	// records that from the actual commands watchStragglers observed rather
+	// than assuming it.
+	Rollback bool
+}
+
+// StallInfo returns this term's current stall status.
+func (h *LeaderHost) StallInfo() StallInfo {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return StallInfo{Stalled: h.stalled, Have: h.stallHave, Need: h.stallNeed, Rollback: h.stallRollback}
+}
+
+// Status returns a short human-readable summary of this term's barrier
+// progress: "stalled: have=H need=N" once a MinMembers-floor stall has
+// parked the run (issue #100), or "running" otherwise. Wiring this onto a
+// job's wire-visible JobStatusResponse (a new proto field) is a follow-up —
+// this is the in-process surface production code and tests can poll today
+// without one.
+func (h *LeaderHost) Status() string {
+	info := h.StallInfo()
+	if info.Stalled {
+		return fmt.Sprintf("stalled: have=%d need=%d", info.Have, info.Need)
+	}
+	return "running"
 }
 
 // ListenAddr returns the address this term's cell.Server actually bound, and
