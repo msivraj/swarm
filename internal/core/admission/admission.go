@@ -20,22 +20,15 @@ type Reject struct {
 	Reason   string
 }
 
-// Template names Admit recognizes and knows how to decompose. These are not
-// pinned by the phase doc (see issue #4 "Notes / ambiguities"); they are the
-// minimal, documented identifiers a JobSpec.Template must match to reach the
-// corresponding internal/core/templates decompose function.
-const (
-	TemplateKeyspaceSearch = "keyspace-search"
-	TemplateMonteCarlo     = "monte-carlo"
-)
-
-// templateDecomposers maps a known JobSpec.Template to the function that
-// validates its Params and decomposes it into Tasks. Admit's template lookup
-// is this map's membership test, so adding a template means adding one entry
-// here — no other branch to keep in sync.
+// templateDecomposers maps a known JobSpec.Template (templates.TemplateKeyspaceSearch,
+// templates.TemplateMonteCarlo — the names are defined in internal/core/templates,
+// the package that owns the decompose functions they name) to the function
+// that validates its Params and decomposes it into Tasks. Admit's template
+// lookup is this map's membership test, so adding a template means adding
+// one entry here — no other branch to keep in sync.
 var templateDecomposers = map[string]func(model.JobSpec) ([]model.Task, Reject){
-	TemplateKeyspaceSearch: decomposeKeyspace,
-	TemplateMonteCarlo:     decomposeMonteCarlo,
+	templates.TemplateKeyspaceSearch: decomposeKeyspace,
+	templates.TemplateMonteCarlo:     decomposeMonteCarlo,
 }
 
 // Admit validates spec and, if valid, decomposes it into Tasks via the named
@@ -46,7 +39,7 @@ var templateDecomposers = map[string]func(model.JobSpec) ([]model.Task, Reject){
 // but not its validation rules. This is the minimal, documented set from
 // issue #4:
 //   - Template must name one of the templates this package knows how to
-//     decompose (TemplateKeyspaceSearch, TemplateMonteCarlo).
+//     decompose (templates.TemplateKeyspaceSearch, templates.TemplateMonteCarlo).
 //   - Coupling must be model.Independent — P0 only runs independent tasks;
 //     later phases (Barrier, Leader, MessagePassing) need a driver this
 //     package does not yet have.

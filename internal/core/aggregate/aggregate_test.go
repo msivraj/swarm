@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/msivraj/swarm/internal/core/admission"
 	"github.com/msivraj/swarm/internal/core/templates"
 	"github.com/msivraj/swarm/internal/model"
 )
@@ -163,7 +162,7 @@ func TestMergeKeyspace(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Merge(admission.TemplateKeyspaceSearch, tt.a, tt.b)
+			got := Merge(templates.TemplateKeyspaceSearch, tt.a, tt.b)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("Merge() = %+v, want %+v", got, tt.want)
 			}
@@ -190,7 +189,7 @@ func TestMergeMonteCarlo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Merge(admission.TemplateMonteCarlo, tt.a, tt.b)
+			got := Merge(templates.TemplateMonteCarlo, tt.a, tt.b)
 			gotStats := decodeMC(t, got)
 			if gotStats != tt.want {
 				t.Fatalf("Merge() stats = %+v, want %+v", gotStats, tt.want)
@@ -253,7 +252,7 @@ func TestMergeUnknownTemplate(t *testing.T) {
 // -----------------------------------------------------------------------
 
 func TestMergeAllEmptyIsZeroAggregate(t *testing.T) {
-	for _, tmpl := range []string{admission.TemplateKeyspaceSearch, admission.TemplateMonteCarlo, "unknown"} {
+	for _, tmpl := range []string{templates.TemplateKeyspaceSearch, templates.TemplateMonteCarlo, "unknown"} {
 		t.Run(tmpl, func(t *testing.T) {
 			got := MergeAll(tmpl, nil)
 			if !reflect.DeepEqual(got, model.Aggregate{}) {
@@ -276,8 +275,8 @@ func TestMergeCommutativeKeyspace(t *testing.T) {
 		{ksHit("j1", 7), model.Aggregate{}},
 	}
 	for i, p := range pairs {
-		ab := Merge(admission.TemplateKeyspaceSearch, p[0], p[1])
-		ba := Merge(admission.TemplateKeyspaceSearch, p[1], p[0])
+		ab := Merge(templates.TemplateKeyspaceSearch, p[0], p[1])
+		ba := Merge(templates.TemplateKeyspaceSearch, p[1], p[0])
 		if !reflect.DeepEqual(ab, ba) {
 			t.Fatalf("pair %d not commutative: Merge(a,b)=%+v Merge(b,a)=%+v", i, ab, ba)
 		}
@@ -291,8 +290,8 @@ func TestMergeCommutativeMonteCarlo(t *testing.T) {
 		{model.Aggregate{}, model.Aggregate{}},
 	}
 	for i, p := range pairs {
-		ab := decodeMC(t, Merge(admission.TemplateMonteCarlo, p[0], p[1]))
-		ba := decodeMC(t, Merge(admission.TemplateMonteCarlo, p[1], p[0]))
+		ab := decodeMC(t, Merge(templates.TemplateMonteCarlo, p[0], p[1]))
+		ba := decodeMC(t, Merge(templates.TemplateMonteCarlo, p[1], p[0]))
 		if !mcApproxEqual(ab, ba) {
 			t.Fatalf("pair %d not commutative: Merge(a,b)=%+v Merge(b,a)=%+v", i, ab, ba)
 		}
@@ -304,9 +303,9 @@ func TestMergeAssociativeKeyspace(t *testing.T) {
 	b := ksNoHit("j1")
 	c := ksHit("j1", 3)
 
-	want := Merge(admission.TemplateKeyspaceSearch, Merge(admission.TemplateKeyspaceSearch, a, b), c)
+	want := Merge(templates.TemplateKeyspaceSearch, Merge(templates.TemplateKeyspaceSearch, a, b), c)
 	for _, order := range permutations([]model.Aggregate{a, b, c}) {
-		lr := Merge(admission.TemplateKeyspaceSearch, Merge(admission.TemplateKeyspaceSearch, order[0], order[1]), order[2])
+		lr := Merge(templates.TemplateKeyspaceSearch, Merge(templates.TemplateKeyspaceSearch, order[0], order[1]), order[2])
 		if !reflect.DeepEqual(lr, want) {
 			t.Fatalf("not associative/grouping-independent for order %+v: got %+v, want %+v", order, lr, want)
 		}
@@ -318,9 +317,9 @@ func TestMergeAssociativeMonteCarlo(t *testing.T) {
 	b := mcPartial("j1", 3, 9, 27)
 	c := mcPartial("j1", 1, 2, 4)
 
-	want := decodeMC(t, Merge(admission.TemplateMonteCarlo, Merge(admission.TemplateMonteCarlo, a, b), c))
+	want := decodeMC(t, Merge(templates.TemplateMonteCarlo, Merge(templates.TemplateMonteCarlo, a, b), c))
 	for _, order := range permutations([]model.Aggregate{a, b, c}) {
-		lr := decodeMC(t, Merge(admission.TemplateMonteCarlo, Merge(admission.TemplateMonteCarlo, order[0], order[1]), order[2]))
+		lr := decodeMC(t, Merge(templates.TemplateMonteCarlo, Merge(templates.TemplateMonteCarlo, order[0], order[1]), order[2]))
 		if !mcApproxEqual(lr, want) {
 			t.Fatalf("not associative/grouping-independent for order %+v: got %+v, want %+v", order, lr, want)
 		}
@@ -329,10 +328,10 @@ func TestMergeAssociativeMonteCarlo(t *testing.T) {
 
 func TestMergeIdentityKeyspace(t *testing.T) {
 	for _, a := range []model.Aggregate{ksHit("j1", 42), ksNoHit("j1"), {}} {
-		if got := Merge(admission.TemplateKeyspaceSearch, a, model.Aggregate{}); !reflect.DeepEqual(got, a) {
+		if got := Merge(templates.TemplateKeyspaceSearch, a, model.Aggregate{}); !reflect.DeepEqual(got, a) {
 			t.Fatalf("Merge(a, zero) = %+v, want %+v", got, a)
 		}
-		if got := Merge(admission.TemplateKeyspaceSearch, model.Aggregate{}, a); !reflect.DeepEqual(got, a) {
+		if got := Merge(templates.TemplateKeyspaceSearch, model.Aggregate{}, a); !reflect.DeepEqual(got, a) {
 			t.Fatalf("Merge(zero, a) = %+v, want %+v", got, a)
 		}
 	}
@@ -341,10 +340,10 @@ func TestMergeIdentityKeyspace(t *testing.T) {
 func TestMergeIdentityMonteCarlo(t *testing.T) {
 	for _, a := range []model.Aggregate{mcPartial("j1", 4, 8, 20), {JobID: "j1"}, {}} {
 		want := decodeMC(t, a)
-		if got := decodeMC(t, Merge(admission.TemplateMonteCarlo, a, model.Aggregate{})); !mcApproxEqual(got, want) {
+		if got := decodeMC(t, Merge(templates.TemplateMonteCarlo, a, model.Aggregate{})); !mcApproxEqual(got, want) {
 			t.Fatalf("Merge(a, zero) stats = %+v, want %+v", got, want)
 		}
-		if got := decodeMC(t, Merge(admission.TemplateMonteCarlo, model.Aggregate{}, a)); !mcApproxEqual(got, want) {
+		if got := decodeMC(t, Merge(templates.TemplateMonteCarlo, model.Aggregate{}, a)); !mcApproxEqual(got, want) {
 			t.Fatalf("Merge(zero, a) stats = %+v, want %+v", got, want)
 		}
 	}
@@ -381,7 +380,7 @@ func TestHierarchicalEqualsFlatKeyspace(t *testing.T) {
 		for _, g := range groups {
 			parts = append(parts, templates.KeyspaceMerge(g))
 		}
-		got := MergeAll(admission.TemplateKeyspaceSearch, parts)
+		got := MergeAll(templates.TemplateKeyspaceSearch, parts)
 		got.JobID, flat.JobID = "", "" // JobID is not under test here
 		got.Done, flat.Done = false, false
 		if !reflect.DeepEqual(got, flat) {
@@ -419,7 +418,7 @@ func TestHierarchicalEqualsFlatMonteCarlo(t *testing.T) {
 		for _, g := range groups {
 			parts = append(parts, templates.MonteCarloMerge(g))
 		}
-		got := decodeMC(t, MergeAll(admission.TemplateMonteCarlo, parts))
+		got := decodeMC(t, MergeAll(templates.TemplateMonteCarlo, parts))
 		if !mcApproxEqual(got, flat) {
 			t.Fatalf("partition %d: hierarchical merge = %+v, want (flat) %+v", i, got, flat)
 		}
@@ -432,9 +431,9 @@ func TestHierarchicalEqualsFlatMonteCarlo(t *testing.T) {
 
 func TestMergeIsDeterministic(t *testing.T) {
 	a, b := ksHit("j1", 9), ksHit("j1", 3)
-	first := Merge(admission.TemplateKeyspaceSearch, a, b)
+	first := Merge(templates.TemplateKeyspaceSearch, a, b)
 	for i := 0; i < 100; i++ {
-		if got := Merge(admission.TemplateKeyspaceSearch, a, b); !reflect.DeepEqual(got, first) {
+		if got := Merge(templates.TemplateKeyspaceSearch, a, b); !reflect.DeepEqual(got, first) {
 			t.Fatalf("non-deterministic output on run %d: %+v vs %+v", i, got, first)
 		}
 	}
@@ -442,9 +441,9 @@ func TestMergeIsDeterministic(t *testing.T) {
 
 func TestMergeAllIsDeterministic(t *testing.T) {
 	parts := []model.Aggregate{mcPartial("j1", 2, 4, 8), mcPartial("j1", 3, 9, 27), mcPartial("j1", 1, 2, 4)}
-	first := MergeAll(admission.TemplateMonteCarlo, parts)
+	first := MergeAll(templates.TemplateMonteCarlo, parts)
 	for i := 0; i < 100; i++ {
-		if got := MergeAll(admission.TemplateMonteCarlo, parts); !reflect.DeepEqual(got, first) {
+		if got := MergeAll(templates.TemplateMonteCarlo, parts); !reflect.DeepEqual(got, first) {
 			t.Fatalf("non-deterministic output on run %d: %+v vs %+v", i, got, first)
 		}
 	}

@@ -17,7 +17,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/msivraj/swarm/internal/core/admission"
 	"github.com/msivraj/swarm/internal/core/mitosis"
 	"github.com/msivraj/swarm/internal/core/templates"
 	"github.com/msivraj/swarm/internal/model"
@@ -189,7 +188,7 @@ func TestKeyspaceSearch(t *testing.T) {
 
 	ctx := context.Background()
 	submitResp, err := client.SubmitJob(ctx, &transport.SubmitJobRequest{
-		Template: admission.TemplateKeyspaceSearch,
+		Template: templates.TemplateKeyspaceSearch,
 		Coupling: transport.Coupling_COUPLING_INDEPENDENT,
 		Params: map[string]string{
 			"start":  "0",
@@ -243,7 +242,7 @@ func TestMonteCarlo(t *testing.T) {
 
 	ctx := context.Background()
 	submitResp, err := client.SubmitJob(ctx, &transport.SubmitJobRequest{
-		Template: admission.TemplateMonteCarlo,
+		Template: templates.TemplateMonteCarlo,
 		Coupling: transport.Coupling_COUPLING_INDEPENDENT,
 		Params: map[string]string{
 			"trials":    strconv.FormatInt(trials, 10),
