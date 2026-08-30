@@ -170,6 +170,38 @@ func (s *Server) releaseAssignmentsLocked(assignments []admission.Assignment) {
 	}
 }
 
+// releaseGangReservationLocked gives back the fleet capacity jobID's gang
+// reservation holds (via releaseAssignmentsLocked over the assignments
+// admitGangLocked committed for it, see gangReservation) and removes its
+// gangJobs entry — the single place both member-churn release paths (#116)
+// meet: a coupled gang's normal completion (onCoupledComplete) and a
+// leader's stall report (ReportCellStatus) each free capacity a Place
+// decision reserved but no longer needs, and neither must let it sit
+// stranded in gangReserved forever (the #71 remainder this ticket closes).
+//
+// requeue controls what happens to jobID's JobSpec once its reservation is
+// gone: completion passes false (the job is finished; there is nothing left
+// to admit), the stall path passes true (H1-A: the job is not done, it lost
+// members and must retry from the pending gang queue once capacity, or a
+// refilled cell, makes it admissible again) — appending it to the tail of
+// s.gangPending for retryPendingGangsLocked to pick back up.
+//
+// A jobID with no live reservation (never a gang, or already released by an
+// earlier call — e.g. a duplicate stall report) is a no-op either way: there
+// is nothing to release, and since gangJobs no longer carries its JobSpec,
+// nothing here to requeue either. Callers must hold s.mu.
+func (s *Server) releaseGangReservationLocked(jobID model.JobID, requeue bool) {
+	r, ok := s.gangJobs[jobID]
+	if !ok {
+		return
+	}
+	s.releaseAssignmentsLocked(r.assignments)
+	delete(s.gangJobs, jobID)
+	if requeue {
+		s.gangPending = append(s.gangPending, r.job)
+	}
+}
+
 // cellFree returns id's Free from snap, or 0 if id is not present.
 func cellFree(snap []model.CellView, id model.CellID) int {
 	for _, c := range snap {

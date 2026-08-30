@@ -55,6 +55,24 @@ type agentAddr struct {
 // TestGangQueuedThenAdmittedOnCapacityChange in gang_test.go — is out of
 // this ticket's scope and reported as an error rather than silently
 // activating a fraction of it. Callers must hold s.mu.
+//
+// admitGangLocked calls this unconditionally on every Place it commits, not
+// only a job's first admission (#116): once a stalled gang's reservation is
+// released and requeued (see releaseGangReservationLocked/ReportCellStatus),
+// retryPendingGangsLocked re-admits it exactly like any other pending gang,
+// and this same read of s.cellAgents[cell] — evaluated fresh, at re-admission
+// time — decomposes over whichever member agents the cell has THEN, not
+// whichever it had at the gang's original activation. That is the whole of
+// H1-B's "refill re-decompose": a cell that lost a member and later regains
+// one (same cell, a new or rejoining agent bringing it back to >= its floor)
+// gets a freshly rebuilt CellAssignment per current member, re-covering the
+// shard the lost member dropped, with no separate "is this a refill" branch
+// — activation and re-activation are the same code path by construction.
+// Cross-cell reassignment is out of scope (H1-B): if retryPendingGangsLocked
+// ever re-admits the gang onto a different single cell than before, this
+// still activates correctly for THAT cell — there is no state naming "the
+// previous cell" for it to be inconsistent with — but nothing here forces
+// re-admission to prefer the original cell.
 func (s *Server) activateCoupledCellLocked(spec model.JobSpec, g admission.Gang) error {
 	if spec.Coupling != model.Barrier {
 		return nil
@@ -149,8 +167,24 @@ func (s *Server) surfaceActivationFailureLocked(spec model.JobSpec, activateErr 
 // place of its usual per-task path once it recognizes the reported TaskId
 // as a gang job id rather than any TaskID this server ever enqueued (see
 // ReportResult's doc).
+//
+// It also releases jobID's gang reservation (releaseGangReservationLocked,
+// requeue=false: the job is finished, there is nothing left to admit) and
+// retries the pending gang queue — the #71 remainder (#116): before this,
+// a completing gang's gangReserved/gangJobs entries lived forever, silently
+// stranding the capacity it no longer needed. The release only runs once
+// the Aggregate write itself has succeeded, so a store failure here leaves
+// the reservation exactly as it was (nothing to retry) rather than freeing
+// capacity for a job store.GetAggregate/JobStatus will not yet report done.
 func (s *Server) onCoupledComplete(jobID model.JobID, combined []byte) error {
-	return s.store.PutAggregate(model.Aggregate{JobID: jobID, Value: combined, Done: true})
+	if err := s.store.PutAggregate(model.Aggregate{JobID: jobID, Value: combined, Done: true}); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.releaseGangReservationLocked(jobID, false)
+	s.retryPendingGangsLocked()
+	s.mu.Unlock()
+	return nil
 }
 
 // parseUintParam and parseIntParam extract a positive numeric Params value,

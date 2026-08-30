@@ -180,6 +180,38 @@ func (s *Server) CellAssignment(_ context.Context, req *transport.CellAssignment
 	return assignment, nil
 }
 
+// ReportCellStatus is the elected cell leader's upward status notice (#116,
+// ticket (c) of the member-churn design; the proto is #121). Its
+// load-bearing signal is req.Stalled: once a coupled barrier parks under its
+// min_members floor (H1-A, the leader's own detection, out of this ticket's
+// scope), the control plane releases this gang's reservation and re-enqueues
+// it on the pending gang queue — releaseGangReservationLocked(jobID, true) —
+// then immediately retries that queue, so the capacity a stalled gang was
+// holding is never left stranded while the job is parked (closing the other
+// half of the #71 remainder alongside onCoupledComplete's completion-path
+// release). A later retryPendingGangsLocked (driven from JoinAgent or the
+// mitosis tick, same as any other pending gang) is what actually re-admits
+// the job once the cell refills — see activateCoupledCellLocked's doc for
+// how that re-decomposes the dataset over the cell's current members.
+//
+// req.Stalled == false carries no CP-side action today: H1-A's own "runnable
+// again" signal is the leader re-polling the existing CellAssignment RPC
+// (#101), not a downward push from this RPC — see the CellStatusRequest
+// proto doc. This handler always accepts the report; a jobID this control
+// plane no longer holds a reservation for (already released by an earlier
+// stall report, or already completed) is exactly releaseGangReservationLocked's
+// documented no-op, not an error.
+func (s *Server) ReportCellStatus(_ context.Context, req *transport.CellStatusRequest) (*transport.CellStatusResponse, error) {
+	if req.GetStalled() {
+		jobID := model.JobID(req.GetJobId())
+		s.mu.Lock()
+		s.releaseGangReservationLocked(jobID, true)
+		s.retryPendingGangsLocked()
+		s.mu.Unlock()
+	}
+	return &transport.CellStatusResponse{Accepted: true}, nil
+}
+
 // PullTask serves the agent's runner loop from its own cell's queue: it
 // looks up which cell req's agent belongs to (learned at JoinAgent) and
 // dequeues from that cell's queue only — an agent never receives a task
