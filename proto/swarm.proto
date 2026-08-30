@@ -63,6 +63,20 @@ message CellAssignmentResponse {
   repeated CellPeer peers = 9; // the full cell voter set (incl. self)
 }
 
+// CellStatusRequest is the elected cell leader's upward status notice. Its
+// load-bearing signal is `stalled`: once the hosted barrier parks under the
+// min_members floor, the control plane releases + requeues the gang reservation
+// so parked capacity isn't stranded. Refill is NOT carried here — the leader
+// learns it is runnable again by re-polling CellAssignment (no downward RPC).
+message CellStatusRequest {
+  string job_id = 1; // the gang job id this cell runs (key into gangJobs)
+  string agent_id = 2; // the reporting leader agent
+  bool stalled = 3; // true once the barrier parked under the floor
+  int32 have = 4; // current surviving membership
+  int32 need = 5; // min_members floor
+}
+message CellStatusResponse { bool accepted = 1; }
+
 message HeartbeatRequest { string agent = 1; }
 message HeartbeatResponse { bool ok = 1; }
 
@@ -161,6 +175,9 @@ service ControlPlane {
   // A cell agent polls whether it belongs to a coupled cell and, if so, its
   // raft peer set + barrier shard (P2 coupled-cell activation).
   rpc CellAssignment(CellAssignmentRequest) returns (CellAssignmentResponse);
+  // The elected cell leader reports its hosted barrier's status (esp. stalled
+  // under the min_members floor) so the CP can release+requeue the reservation.
+  rpc ReportCellStatus(CellStatusRequest) returns (CellStatusResponse);
 }
 
 // GlobalRouter is the P1 global routing layer (S3): it holds the merged
