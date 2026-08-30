@@ -121,6 +121,27 @@ func (s *Server) activateCoupledCellLocked(spec model.JobSpec, g admission.Gang)
 	return nil
 }
 
+// surfaceActivationFailureLocked makes an activateCoupledCellLocked error
+// visible without touching this gang's already-committed admission
+// decision (gang.go's admitGangLocked doc explains why that decision cannot
+// change here): it logs a structured line via cfg.Logger — spec.ID plus the
+// activation error — and records the same reason as spec's Aggregate,
+// reusing onCoupledComplete's existing store surface (store.PutAggregate)
+// rather than a new proto field, so JobStatus/Ps read it back through
+// JobStatusResponse.Aggregate exactly as they would a completed job's
+// result. Done stays false: activation, not the job itself, failed, and
+// nothing will ever run to complete it, so it must not read as finished.
+// Callers must hold s.mu.
+func (s *Server) surfaceActivationFailureLocked(spec model.JobSpec, activateErr error) {
+	s.cfg.Logger("controlplane: activate coupled cell for job %s: %v", spec.ID, activateErr)
+
+	reason := fmt.Sprintf("activation failed: %v", activateErr)
+	agg := model.Aggregate{JobID: spec.ID, Value: []byte(reason), Done: false}
+	if err := s.store.PutAggregate(agg); err != nil {
+		s.cfg.Logger("controlplane: record activation failure for job %s: %v", spec.ID, err)
+	}
+}
+
 // onCoupledComplete stores combined — the coupled cell's elected leader's
 // final, all-reduced gradient (D6) — as jobID's Aggregate and marks it
 // Done, so JobStatus flips exactly as it does for a P0/P1 job's normal

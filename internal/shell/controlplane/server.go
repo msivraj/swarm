@@ -14,6 +14,7 @@ package controlplane
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"sort"
 	"sync"
@@ -92,6 +93,9 @@ func New(st store.Store, cfg Config, now func() model.Instant) *Server {
 	}
 	if cfg.PeerDialer == nil {
 		cfg.PeerDialer = GRPCPeerDialer()
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = log.Printf
 	}
 	return &Server{
 		store:         st,
