@@ -63,13 +63,19 @@ const (
 	// GiveUp — an optional give-up timeout fired (issue #59): the shell has
 	// decided a stalled-under-floor barrier will never refill and gives up.
 	GiveUp
+	// Refill{worker} — a member rejoins (issue #117): the shell has decided
+	// (out of this core's scope — CP ticket) that a returning or new worker
+	// should be added back to the barrier's membership. Growth, the mirror
+	// of Lost's shrink, so a parked/under-floor barrier can climb back to
+	// MinMembers and resume via ordinary subsequent Done events.
+	Refill
 )
 
 // Event is the sum type folded by step: Done | Deadline | Lost | Restored |
-// GiveUp.
+// GiveUp | Refill.
 type Event struct {
 	Kind    EventKind
-	Worker  WorkerID   // Done, Lost
+	Worker  WorkerID   // Done, Lost, Refill
 	Partial []byte     // Done
 	Ckpt    Checkpoint // Restored
 }
@@ -107,6 +113,12 @@ const (
 	// the checkpoint is preserved (not deleted), the shell reports a clean
 	// Failed.
 	Fail
+	// AddMember{worker} — a member was added back to the barrier's
+	// membership by a Refill event (issue #117). Replicated through the log
+	// like every other command so a BarrierDriver.Resume replay after
+	// failover reconstructs the grown membership deterministically, instead
+	// of a shell-side out-of-band mutation of State.Members.
+	AddMember
 )
 
 // Command is a description of an effect the shell will execute. Cores return
@@ -115,7 +127,7 @@ type Command struct {
 	Op       CmdOp
 	Partials map[WorkerID][]byte // AllReduce
 	Step     int                 // Release (step to advance to), CheckpointOp (step snapshotted)
-	Worker   WorkerID            // Evict
+	Worker   WorkerID            // Evict, AddMember
 	Ckpt     Checkpoint          // Rollback, Fail
 	Have     int                 // Stall — surviving member count
 	Need     int                 // Stall — MinMembers
@@ -160,6 +172,14 @@ type Command struct {
 //     Fail{LastCheckpoint} and marks the state terminal (Failed=true),
 //     leaving LastCheckpoint untouched — the checkpoint is preserved, not
 //     deleted.
+//   - I. Refill (issue #117) is growth, the mirror of Lost's shrink: an
+//     already-member Refill is a no-op (idempotent, like a duplicate Done);
+//     otherwise the worker is appended to Members and a single
+//     AddMember{worker} is emitted. Refill never itself completes or resumes
+//     a step — Step, Partials, and LastCheckpoint are left untouched, and a
+//     parked/under-floor barrier climbs back only through the ordinary
+//     Done -> completeOrStall path once membership has grown enough to clear
+//     MinMembers again.
 func step(s State, ev Event, now model.Instant) (State, []Command) {
 	switch ev.Kind {
 	case Done:
@@ -172,6 +192,8 @@ func step(s State, ev Event, now model.Instant) (State, []Command) {
 		return stepRestored(s, ev.Ckpt)
 	case GiveUp:
 		return stepGiveUp(s)
+	case Refill:
+		return stepRefill(s, ev.Worker)
 	default:
 		// Unknown EventKind: no-op rather than panic — a pure core must
 		// never crash on unexpected input.
@@ -291,6 +313,25 @@ func stepGiveUp(s State) (State, []Command) {
 	return next, []Command{{Op: Fail, Ckpt: s.LastCheckpoint}}
 }
 
+// stepRefill folds a Refill{w} event (decision I, issue #117): a member
+// rejoins. If w is already a member this is a no-op — idempotent, like a
+// duplicate Done — and emits no command. Otherwise w is appended to a
+// copy-on-write Members and a single AddMember{w} command is emitted so the
+// growth is replicated through the log (a BarrierDriver.Resume replay
+// reconstructs it deterministically after failover). Step, Partials, and
+// LastCheckpoint are left untouched: Refill only lifts the membership count
+// toward MinMembers — it does not itself complete or resume a stalled step,
+// which happens naturally once a subsequent Done drives completeOrStall.
+func stepRefill(s State, w WorkerID) (State, []Command) {
+	if isMember(s.Members, w) {
+		return s, nil
+	}
+
+	next := s
+	next.Members = appendWorker(s.Members, w)
+	return next, []Command{{Op: AddMember, Worker: w}}
+}
+
 // completeOrStall is the single gate (decision G) through which every
 // would-be step completion passes: s.Members already holds the surviving
 // membership for the step that just went fully Done, and partials holds
@@ -384,6 +425,15 @@ func removeWorker(members []WorkerID, w WorkerID) []WorkerID {
 		}
 	}
 	return out
+}
+
+// appendWorker returns members with w appended, copy-on-write so it never
+// mutates the caller's slice. Callers must check isMember first (stepRefill
+// does) so this never introduces a duplicate.
+func appendWorker(members []WorkerID, w WorkerID) []WorkerID {
+	out := make([]WorkerID, len(members), len(members)+1)
+	copy(out, members)
+	return append(out, w)
 }
 
 // clonePartials copies m so folding a Done event never mutates a Partials
