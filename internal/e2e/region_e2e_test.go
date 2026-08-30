@@ -37,7 +37,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/msivraj/swarm/internal/core/admission"
 	"github.com/msivraj/swarm/internal/core/routing"
 	"github.com/msivraj/swarm/internal/core/templates"
 	"github.com/msivraj/swarm/internal/model"
@@ -450,7 +449,7 @@ func TestSpreadAndHierarchicalRollupAcrossRegions(t *testing.T) {
 
 	ctx := context.Background()
 	submitResp, err := globalClient.Submit(ctx, &transport.SubmitJobRequest{
-		Template: admission.TemplateMonteCarlo,
+		Template: templates.TemplateMonteCarlo,
 		Coupling: transport.Coupling_COUPLING_INDEPENDENT,
 		Params: map[string]string{
 			"trials":    strconv.FormatInt(trials, 10),
@@ -612,7 +611,7 @@ func TestRegionLossTriggersAgentFailover(t *testing.T) {
 	// The fleet keeps progressing: a job submitted directly to eu-west after
 	// failover is pulled and run by the same (now re-registered) agent.
 	submitResp, err := euClient.SubmitJob(ctx, &transport.SubmitJobRequest{
-		Template: admission.TemplateKeyspaceSearch,
+		Template: templates.TemplateKeyspaceSearch,
 		Coupling: transport.Coupling_COUPLING_INDEPENDENT,
 		Params:   map[string]string{"start": "0", "end": "8", "shards": "4"},
 	})
@@ -691,7 +690,7 @@ func TestTightCouplingJobStaysInOneRegion(t *testing.T) {
 		blockSize = int64(10)
 		baseSeed  = int64(7)
 	)
-	spec := model.JobSpec{ID: "barrier-job-1", Template: admission.TemplateMonteCarlo, Coupling: model.Barrier}
+	spec := model.JobSpec{ID: "barrier-job-1", Template: templates.TemplateMonteCarlo, Coupling: model.Barrier}
 	tasks := templates.MonteCarloDecompose(templates.MCJob{JobID: spec.ID, Trials: trials, BlockSize: blockSize, BaseSeed: baseSeed})
 	if len(tasks) == 0 {
 		t.Fatalf("MonteCarloDecompose produced no tasks")

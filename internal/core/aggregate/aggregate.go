@@ -14,7 +14,6 @@ package aggregate
 import (
 	"bytes"
 
-	"github.com/msivraj/swarm/internal/core/admission"
 	"github.com/msivraj/swarm/internal/core/templates"
 	"github.com/msivraj/swarm/internal/model"
 )
@@ -24,14 +23,14 @@ import (
 // this map's membership test — adding a template means adding one entry
 // here, mirroring admission.templateDecomposers' shape.
 var combiners = map[string]func(a, b model.Aggregate) model.Aggregate{
-	admission.TemplateKeyspaceSearch: templates.KeyspaceCombine,
-	admission.TemplateMonteCarlo:     templates.MonteCarloCombine,
+	templates.TemplateKeyspaceSearch: templates.KeyspaceCombine,
+	templates.TemplateMonteCarlo:     templates.MonteCarloCombine,
 }
 
 // Merge combines two partial Aggregates for a job of the given template into
 // one. It is a commutative monoid whose identity is the zero Aggregate
 // (JobID=="", Value==nil, Done==false). template is one of
-// admission.TemplateKeyspaceSearch / admission.TemplateMonteCarlo — an
+// templates.TemplateKeyspaceSearch / templates.TemplateMonteCarlo — an
 // Aggregate carries no template tag of its own, so the tier (which always
 // knows the job's template) passes it in. Merge is the same function at
 // every tier: cell-partials merge into a region-partial, region-partials

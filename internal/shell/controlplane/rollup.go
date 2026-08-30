@@ -7,7 +7,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/msivraj/swarm/internal/core/admission"
 	"github.com/msivraj/swarm/internal/core/aggregate"
 	"github.com/msivraj/swarm/internal/core/templates"
 	"github.com/msivraj/swarm/internal/model"
@@ -18,8 +17,8 @@ import (
 // cell's []TaskResult to a per-cell partial Aggregate — the cell tier of the
 // two-tier roll-up (ticket #44). Mirrors aggregate.combiners' shape.
 var mergeFuncs = map[string]func([]model.TaskResult) model.Aggregate{
-	admission.TemplateKeyspaceSearch: templates.KeyspaceMerge,
-	admission.TemplateMonteCarlo:     templates.MonteCarloMerge,
+	templates.TemplateKeyspaceSearch: templates.KeyspaceMerge,
+	templates.TemplateMonteCarlo:     templates.MonteCarloMerge,
 }
 
 // maybeRollup computes and, once every DISTINCT task admitted/dispatched for

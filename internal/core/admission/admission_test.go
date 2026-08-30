@@ -11,7 +11,7 @@ import (
 func TestAdmit(t *testing.T) {
 	keyspaceJob := model.JobSpec{
 		ID:       "j-ks",
-		Template: TemplateKeyspaceSearch,
+		Template: templates.TemplateKeyspaceSearch,
 		Coupling: model.Independent,
 		Params:   map[string]string{"start": "0", "end": "10", "shards": "3"},
 	}
@@ -21,7 +21,7 @@ func TestAdmit(t *testing.T) {
 
 	mcJob := model.JobSpec{
 		ID:       "j-mc",
-		Template: TemplateMonteCarlo,
+		Template: templates.TemplateMonteCarlo,
 		Coupling: model.Independent,
 		Params:   map[string]string{"trials": "100", "blockSize": "30", "seed": "7"},
 	}
@@ -67,7 +67,7 @@ func TestAdmit(t *testing.T) {
 			name: "non-Independent coupling is rejected for keyspace-search",
 			spec: model.JobSpec{
 				ID:       "j1",
-				Template: TemplateKeyspaceSearch,
+				Template: templates.TemplateKeyspaceSearch,
 				Coupling: model.Barrier,
 				Params:   map[string]string{"start": "0", "end": "10", "shards": "3"},
 			},
@@ -77,7 +77,7 @@ func TestAdmit(t *testing.T) {
 			name: "non-Independent coupling is rejected for monte-carlo",
 			spec: model.JobSpec{
 				ID:       "j1",
-				Template: TemplateMonteCarlo,
+				Template: templates.TemplateMonteCarlo,
 				Coupling: model.Leader,
 				Params:   map[string]string{"trials": "100", "blockSize": "30", "seed": "7"},
 			},
@@ -87,7 +87,7 @@ func TestAdmit(t *testing.T) {
 			name: "keyspace-search missing start is rejected",
 			spec: model.JobSpec{
 				ID:       "j1",
-				Template: TemplateKeyspaceSearch,
+				Template: templates.TemplateKeyspaceSearch,
 				Coupling: model.Independent,
 				Params:   map[string]string{"end": "10", "shards": "3"},
 			},
@@ -97,7 +97,7 @@ func TestAdmit(t *testing.T) {
 			name: "keyspace-search invalid end is rejected",
 			spec: model.JobSpec{
 				ID:       "j1",
-				Template: TemplateKeyspaceSearch,
+				Template: templates.TemplateKeyspaceSearch,
 				Coupling: model.Independent,
 				Params:   map[string]string{"start": "0", "end": "not-a-number", "shards": "3"},
 			},
@@ -107,7 +107,7 @@ func TestAdmit(t *testing.T) {
 			name: "keyspace-search missing shards is rejected",
 			spec: model.JobSpec{
 				ID:       "j1",
-				Template: TemplateKeyspaceSearch,
+				Template: templates.TemplateKeyspaceSearch,
 				Coupling: model.Independent,
 				Params:   map[string]string{"start": "0", "end": "10"},
 			},
@@ -117,7 +117,7 @@ func TestAdmit(t *testing.T) {
 			name: "keyspace-search empty range is rejected",
 			spec: model.JobSpec{
 				ID:       "j1",
-				Template: TemplateKeyspaceSearch,
+				Template: templates.TemplateKeyspaceSearch,
 				Coupling: model.Independent,
 				Params:   map[string]string{"start": "10", "end": "10", "shards": "3"},
 			},
@@ -127,7 +127,7 @@ func TestAdmit(t *testing.T) {
 			name: "monte-carlo missing trials is rejected",
 			spec: model.JobSpec{
 				ID:       "j1",
-				Template: TemplateMonteCarlo,
+				Template: templates.TemplateMonteCarlo,
 				Coupling: model.Independent,
 				Params:   map[string]string{"blockSize": "30", "seed": "7"},
 			},
@@ -137,7 +137,7 @@ func TestAdmit(t *testing.T) {
 			name: "monte-carlo invalid blockSize is rejected",
 			spec: model.JobSpec{
 				ID:       "j1",
-				Template: TemplateMonteCarlo,
+				Template: templates.TemplateMonteCarlo,
 				Coupling: model.Independent,
 				Params:   map[string]string{"trials": "100", "blockSize": "not-a-number", "seed": "7"},
 			},
@@ -147,7 +147,7 @@ func TestAdmit(t *testing.T) {
 			name: "monte-carlo missing seed is rejected",
 			spec: model.JobSpec{
 				ID:       "j1",
-				Template: TemplateMonteCarlo,
+				Template: templates.TemplateMonteCarlo,
 				Coupling: model.Independent,
 				Params:   map[string]string{"trials": "100", "blockSize": "30"},
 			},
@@ -157,7 +157,7 @@ func TestAdmit(t *testing.T) {
 			name: "monte-carlo zero trials is rejected",
 			spec: model.JobSpec{
 				ID:       "j1",
-				Template: TemplateMonteCarlo,
+				Template: templates.TemplateMonteCarlo,
 				Coupling: model.Independent,
 				Params:   map[string]string{"trials": "0", "blockSize": "30", "seed": "7"},
 			},
@@ -197,13 +197,13 @@ func TestAdmitIsDeterministic(t *testing.T) {
 	specs := []model.JobSpec{
 		{
 			ID:       "j-ks",
-			Template: TemplateKeyspaceSearch,
+			Template: templates.TemplateKeyspaceSearch,
 			Coupling: model.Independent,
 			Params:   map[string]string{"start": "3", "end": "97", "shards": "5"},
 		},
 		{
 			ID:       "j-mc",
-			Template: TemplateMonteCarlo,
+			Template: templates.TemplateMonteCarlo,
 			Coupling: model.Independent,
 			Params:   map[string]string{"trials": "250", "blockSize": "40", "seed": "-11"},
 		},
