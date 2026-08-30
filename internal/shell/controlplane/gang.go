@@ -105,10 +105,15 @@ func (s *Server) admitGangLocked(job model.JobSpec) admission.Gang {
 	// (e.g. a malformed dist-training request) is not this gang's admission
 	// failing — the reservation above already committed, and gang.go's own
 	// contract ("SubmitJob never rejects a well-formed gang job for lack of
-	// capacity") extends to a request activation can't service either;
-	// there is no caller here (retry runs off the background loops, not an
-	// RPC) to surface it to.
-	_ = s.activateCoupledCellLocked(job, g)
+	// capacity") extends to a request activation can't service either; there
+	// is no caller here (retry runs off the background loops, not an RPC) to
+	// return the error to. It is instead made visible without changing that
+	// admission outcome — logged, and recorded against the job so
+	// JobStatus/Ps can report why it will otherwise hang Done=false forever
+	// (see surfaceActivationFailureLocked, #113).
+	if err := s.activateCoupledCellLocked(job, g); err != nil {
+		s.surfaceActivationFailureLocked(job, err)
+	}
 	return g
 }
 

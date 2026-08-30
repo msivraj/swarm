@@ -74,6 +74,16 @@ type Config struct {
 	// gRPC dial (GRPCPeerDialer); tests supply one backed by an in-process
 	// (bufconn) fake ControlPlane.
 	PeerDialer PeerDialer
+
+	// Logger receives one formatted line for shell-observability events this
+	// server discovers off the RPC path it could otherwise report the error
+	// on directly — e.g. a coupled-cell activation failure discovered inside
+	// admitGangLocked, whose caller (SubmitJob, or a background capacity
+	// retry with no RPC caller at all) must still succeed (see
+	// activateCoupledCellLocked's doc). Defaults to log.Printf; tests inject
+	// a sink so they can assert on the exact line rather than scraping
+	// stdout.
+	Logger func(format string, args ...interface{})
 }
 
 // DefaultConfig returns the P0 defaults: an 8-slot starting cell, a 30s

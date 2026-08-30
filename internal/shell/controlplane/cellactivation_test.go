@@ -2,8 +2,11 @@ package controlplane
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sort"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/msivraj/swarm/internal/core/templates"
@@ -242,5 +245,159 @@ func TestActivateCoupledCellSkipsWithoutDistTrainingParams(t *testing.T) {
 	}
 	if len(srv.cellAssignments) != 0 {
 		t.Fatalf("cellAssignments = %+v, want empty (no samples/shards Params, nothing to activate)", srv.cellAssignments)
+	}
+}
+
+// syncLogSink is a Config.Logger sink safe for concurrent RPC handlers
+// (matching how a real logger would be used), and lets a test read back
+// every formatted line it received.
+type syncLogSink struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (s *syncLogSink) log(format string, args ...interface{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lines = append(s.lines, fmt.Sprintf(format, args...))
+}
+
+func (s *syncLogSink) snapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.lines...)
+}
+
+// TestActivateCoupledCellMalformedGangSurfacesError is #113's acceptance
+// criterion: a Barrier dist-training gang whose shard count does not match
+// its cell's member-agent count is still admitted — gang.go's "SubmitJob
+// never rejects a well-formed gang for lack of capacity" contract holds,
+// this is not a capacity problem — but activation for it fails, and that
+// failure is now visible in two places instead of an invisible, permanent
+// Done=false hang: the injected Logger sees a line naming the job id and
+// the activation error, and JobStatus reports an "activation failed: ..."
+// reason.
+func TestActivateCoupledCellMalformedGangSurfacesError(t *testing.T) {
+	clock := &testClock{}
+	cfg := fastConfig()
+	sink := &syncLogSink{}
+	cfg.Logger = sink.log
+
+	client, srv, teardown := newTestServer(t, cfg, clock)
+	defer teardown()
+	ctx := context.Background()
+
+	// cell-1 has exactly one member agent, but the job below asks for 3
+	// shards — a shard/agent-count mismatch activateCoupledCellLocked
+	// reports as an error rather than silently activating a fraction of
+	// the cell (see its doc).
+	joinCoupledAgent(t, ctx, client, "agent-1", 11)
+
+	resp, err := client.SubmitJob(ctx, &transport.SubmitJobRequest{
+		Template: "dist-training",
+		Coupling: transport.Coupling_COUPLING_BARRIER,
+		Params: map[string]string{
+			"min_members": "1",
+			"samples":     "30",
+			"shards":      "3",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SubmitJob: %v", err)
+	}
+	jobID := resp.GetJobId()
+	if jobID == "" {
+		t.Fatalf("SubmitJob returned empty job id")
+	}
+
+	srv.mu.Lock()
+	_, placed := srv.gangJobs[model.JobID(jobID)]
+	assignments := len(srv.cellAssignments)
+	srv.mu.Unlock()
+	if !placed {
+		t.Fatalf("gang job %s was not placed, want admission to still succeed", jobID)
+	}
+	if assignments != 0 {
+		t.Fatalf("cellAssignments = %d, want 0 (activation failed, nothing distributed)", assignments)
+	}
+
+	logs := sink.snapshot()
+	found := false
+	for _, l := range logs {
+		if strings.Contains(l, jobID) && strings.Contains(l, "shard(s)") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Logger never logged an activation failure for job %s, got %v", jobID, logs)
+	}
+
+	statusResp, err := client.JobStatus(ctx, &transport.JobStatusRequest{JobId: jobID})
+	if err != nil {
+		t.Fatalf("JobStatus: %v", err)
+	}
+	if statusResp.GetDone() {
+		t.Fatalf("JobStatus.Done = true, want false (activation failed, job never completes)")
+	}
+	reason := string(statusResp.GetAggregate())
+	if !strings.HasPrefix(reason, "activation failed:") {
+		t.Fatalf("JobStatus.Aggregate = %q, want prefix %q", reason, "activation failed:")
+	}
+	if !strings.Contains(reason, "shard(s)") {
+		t.Fatalf("JobStatus.Aggregate = %q, want it to name the shard/agent mismatch", reason)
+	}
+}
+
+// TestActivateCoupledCellWellFormedGangUnaffected is #113's no-regression
+// acceptance criterion: a well-formed dist-training gang still activates
+// exactly as before — no Logger line, and JobStatus reports the ordinary
+// "not done yet" empty-Aggregate shape, never a failure reason.
+func TestActivateCoupledCellWellFormedGangUnaffected(t *testing.T) {
+	clock := &testClock{}
+	cfg := fastConfig()
+	sink := &syncLogSink{}
+	cfg.Logger = sink.log
+
+	client, srv, teardown := newTestServer(t, cfg, clock)
+	defer teardown()
+	ctx := context.Background()
+
+	joinCoupledAgent(t, ctx, client, "agent-1", 11)
+
+	resp, err := client.SubmitJob(ctx, &transport.SubmitJobRequest{
+		Template: "dist-training",
+		Coupling: transport.Coupling_COUPLING_BARRIER,
+		Params: map[string]string{
+			"min_members": "1",
+			"samples":     "30",
+			"shards":      "1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SubmitJob: %v", err)
+	}
+	jobID := resp.GetJobId()
+
+	srv.mu.Lock()
+	_, hasAssignment := srv.cellAssignments["agent-1"]
+	srv.mu.Unlock()
+	if !hasAssignment {
+		t.Fatalf("agent-1 has no CellAssignment, want one (well-formed gang activates)")
+	}
+
+	if logs := sink.snapshot(); len(logs) != 0 {
+		t.Fatalf("Logger = %v, want no lines for a well-formed gang", logs)
+	}
+
+	statusResp, err := client.JobStatus(ctx, &transport.JobStatusRequest{JobId: jobID})
+	if err != nil {
+		t.Fatalf("JobStatus: %v", err)
+	}
+	if statusResp.GetDone() {
+		t.Fatalf("JobStatus.Done = true, want false (job not complete yet)")
+	}
+	if len(statusResp.GetAggregate()) != 0 {
+		t.Fatalf("JobStatus.Aggregate = %q, want empty (no activation failure)", statusResp.GetAggregate())
 	}
 }
