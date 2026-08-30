@@ -150,6 +150,65 @@ func TestProductionRaftCluster_Failover(t *testing.T) {
 	waitForLog(t, newLeader, 15*time.Second, want)
 }
 
+// TestNewNode_DoesNotMutateSharedRaftConfig: two independent nodes built from
+// one shared *raft.Config must not observe each other's LocalID — NewNode has
+// to copy the config before setting LocalID, never write through the
+// caller's pointer (#114).
+func TestNewNode_DoesNotMutateSharedRaftConfig(t *testing.T) {
+	shared := tcpRaftConfig()
+	if shared.LocalID != "" {
+		t.Fatalf("precondition: shared.LocalID = %q, want empty", shared.LocalID)
+	}
+
+	addr1 := freeTCPAddr(t)
+	n1, err := NewNode(NodeConfig{
+		ID:         "node1",
+		BindAddr:   addr1,
+		Peers:      []Peer{{ID: "node1", RaftAddr: addr1}},
+		Bootstrap:  true,
+		DataDir:    t.TempDir(),
+		RaftConfig: shared,
+	})
+	if err != nil {
+		t.Fatalf("NewNode node1: %v", err)
+	}
+	t.Cleanup(func() { _ = n1.Shutdown() })
+
+	if shared.LocalID != "" {
+		t.Fatalf("after NewNode(node1): shared.LocalID = %q, want unchanged empty", shared.LocalID)
+	}
+
+	addr2 := freeTCPAddr(t)
+	n2, err := NewNode(NodeConfig{
+		ID:         "node2",
+		BindAddr:   addr2,
+		Peers:      []Peer{{ID: "node2", RaftAddr: addr2}},
+		Bootstrap:  true,
+		DataDir:    t.TempDir(),
+		RaftConfig: shared,
+	})
+	if err != nil {
+		t.Fatalf("NewNode node2: %v", err)
+	}
+	t.Cleanup(func() { _ = n2.Shutdown() })
+
+	if shared.LocalID != "" {
+		t.Fatalf("after NewNode(node2): shared.LocalID = %q, want unchanged empty", shared.LocalID)
+	}
+
+	// Each node still elects itself leader of its own single-node cluster
+	// under its own ID, confirming rc.LocalID was set correctly per-node
+	// despite the shared source config never being mutated.
+	l1 := waitForNodeLeader(t, []*Node{n1}, 15*time.Second)
+	if l1.ID != "node1" {
+		t.Fatalf("n1 leader ID = %q, want %q", l1.ID, "node1")
+	}
+	l2 := waitForNodeLeader(t, []*Node{n2}, 15*time.Second)
+	if l2.ID != "node2" {
+		t.Fatalf("n2 leader ID = %q, want %q", l2.ID, "node2")
+	}
+}
+
 // TestProductionRaftNode_DurabilityAcrossRestart: a node restarted against the
 // same DataDir recovers its replicated log from the durable store.
 func TestProductionRaftNode_DurabilityAcrossRestart(t *testing.T) {

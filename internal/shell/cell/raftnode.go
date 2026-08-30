@@ -55,9 +55,16 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("cell: data dir %q: %w", cfg.DataDir, err)
 	}
 
-	rc := cfg.RaftConfig
-	if rc == nil {
-		rc = raft.DefaultConfig()
+	// Defensive shallow copy: cfg.RaftConfig is a *raft.Config the caller
+	// owns. Mutating LocalID through the caller's pointer would stomp it for
+	// every other node sharing the same config value; copy first and mutate
+	// only the local copy. raft.Config's fields (LocalID included) are plain
+	// values, so a shallow copy is sufficient here.
+	var rc raft.Config
+	if cfg.RaftConfig != nil {
+		rc = *cfg.RaftConfig
+	} else {
+		rc = *raft.DefaultConfig()
 	}
 	rc.LocalID = raft.ServerID(cfg.ID)
 
@@ -81,7 +88,7 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 
 	fsm := NewFSM()
 	// BoltStore satisfies both LogStore and StableStore.
-	r, err := raft.NewRaft(rc, fsm, store, store, snaps, transport)
+	r, err := raft.NewRaft(&rc, fsm, store, store, snaps, transport)
 	if err != nil {
 		return nil, fmt.Errorf("cell: raft: %w", err)
 	}
