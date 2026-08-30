@@ -281,6 +281,49 @@ func TestStep(t *testing.T) {
 				Failed: true},
 			wantCmds: []Command{{Op: Fail, Ckpt: Checkpoint{}}},
 		},
+
+		// -- issue #117: Refill --------------------------------------------
+
+		{
+			name:  "Refill of a new id grows Members and emits AddMember",
+			s:     State{Step: 3, K: 2, Members: members("a", "b")},
+			ev:    Event{Kind: Refill, Worker: "c"},
+			wantS: State{Step: 3, K: 2, Members: members("a", "b", "c")},
+			wantCmds: []Command{
+				{Op: AddMember, Worker: "c"},
+			},
+		},
+		{
+			name: "Refill of an existing member is a no-op: no state change, no command",
+			s: State{Step: 3, K: 2, Members: members("a", "b"),
+				Partials: partials("a", "pa")},
+			ev: Event{Kind: Refill, Worker: "b"},
+			wantS: State{Step: 3, K: 2, Members: members("a", "b"),
+				Partials: partials("a", "pa")},
+			wantCmds: nil,
+		},
+		{
+			name: "Refill leaves Step, Partials, and LastCheckpoint untouched",
+			s: State{Step: 7, K: 2, Members: members("a"),
+				Partials: partials("a", "pa"), LastCheckpoint: Checkpoint{Step: 6},
+				MinMembers: 3},
+			ev: Event{Kind: Refill, Worker: "b"},
+			wantS: State{Step: 7, K: 2, Members: members("a", "b"),
+				Partials: partials("a", "pa"), LastCheckpoint: Checkpoint{Step: 6},
+				MinMembers: 3},
+			wantCmds: []Command{
+				{Op: AddMember, Worker: "b"},
+			},
+		},
+		{
+			name:  "Refill on an empty membership grows from zero",
+			s:     State{Step: 0, K: 0, Members: nil},
+			ev:    Event{Kind: Refill, Worker: "a"},
+			wantS: State{Step: 0, K: 0, Members: members("a")},
+			wantCmds: []Command{
+				{Op: AddMember, Worker: "a"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -681,6 +724,159 @@ func TestStepIsDeterministicUnderGiveUp(t *testing.T) {
 		if !reflect.DeepEqual(gotS, firstS) || !reflect.DeepEqual(gotCmds, firstCmds) {
 			t.Fatalf("non-deterministic output on run %d: state=%+v cmds=%+v, want state=%+v cmds=%+v",
 				i, gotS, gotCmds, firstS, firstCmds)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue #117 — Refill: determinism, membership-set property, and the
+// "refill lifts a stalled barrier back to the floor" acceptance case.
+// -----------------------------------------------------------------------
+
+func TestStepIsDeterministicUnderRefill(t *testing.T) {
+	s := State{Step: 5, K: 2, Members: members("a"),
+		Partials: partials("a", "pa"), LastCheckpoint: Checkpoint{Step: 4}, MinMembers: 3}
+	ev := Event{Kind: Refill, Worker: "b"}
+
+	firstS, firstCmds := step(s, ev, model.Instant(9))
+	for i := 0; i < 100; i++ {
+		gotS, gotCmds := step(s, ev, model.Instant(9))
+		if !reflect.DeepEqual(gotS, firstS) || !reflect.DeepEqual(gotCmds, firstCmds) {
+			t.Fatalf("non-deterministic output on run %d: state=%+v cmds=%+v, want state=%+v cmds=%+v",
+				i, gotS, gotCmds, firstS, firstCmds)
+		}
+	}
+}
+
+// memberSet converts a Members slice into a set for order-insensitive
+// comparison.
+func memberSet(ws []WorkerID) map[WorkerID]bool {
+	out := make(map[WorkerID]bool, len(ws))
+	for _, w := range ws {
+		out[w] = true
+	}
+	return out
+}
+
+// TestRefillLiftsAStalledBarrierBackToTheFloor is acceptance criterion (iii):
+// a barrier parked under MinMembers climbs back only once Members reaches
+// MinMembers again, and completion still comes from an ordinary subsequent
+// round of Done — Refill itself never all-reduces a sub-floor (or any)
+// fraction.
+func TestRefillLiftsAStalledBarrierBackToTheFloor(t *testing.T) {
+	// Parked at checkpoint 2 with only "a" and "b" surviving, under a floor
+	// of 3 — the shape completeOrStall's stall() leaves behind.
+	stalled := State{Step: 2, K: 0, Members: members("a", "b"),
+		LastCheckpoint: Checkpoint{Step: 2}, MinMembers: 3}
+
+	refillS, refillCmds := step(stalled, Event{Kind: Refill, Worker: "c"}, 0)
+	wantRefillS := State{Step: 2, K: 0, Members: members("a", "b", "c"),
+		LastCheckpoint: Checkpoint{Step: 2}, MinMembers: 3}
+	if !reflect.DeepEqual(refillS, wantRefillS) {
+		t.Fatalf("after Refill: state = %+v, want %+v", refillS, wantRefillS)
+	}
+	if hasOp(refillCmds, AllReduce) || hasOp(refillCmds, Release) {
+		t.Fatalf("Refill alone completed a step: cmds = %+v", refillCmds)
+	}
+	wantRefillCmds := []Command{{Op: AddMember, Worker: "c"}}
+	if !reflect.DeepEqual(refillCmds, wantRefillCmds) {
+		t.Fatalf("Refill cmds = %+v, want %+v", refillCmds, wantRefillCmds)
+	}
+
+	// Now a full round of Done for the refilled membership (a, b, c) — the
+	// floor (3) is met, so this completes via the ordinary path.
+	doneEvents := []Event{
+		{Kind: Done, Worker: "a", Partial: []byte("pa")},
+		{Kind: Done, Worker: "b", Partial: []byte("pb")},
+		{Kind: Done, Worker: "c", Partial: []byte("pc")},
+	}
+	finalS, doneCmds := foldEvents(refillS, doneEvents)
+
+	if !hasOp(doneCmds, AllReduce) {
+		t.Fatalf("full round after refill did not complete: cmds = %+v", doneCmds)
+	}
+	if hasOp(doneCmds, Stall) {
+		t.Fatalf("full round after refill still stalled: cmds = %+v", doneCmds)
+	}
+	if finalS.Step != 3 {
+		t.Fatalf("finalS.Step = %d, want 3 (step completed once)", finalS.Step)
+	}
+}
+
+// TestRefillOrderIndependentGrowth is the order-independence property: for a
+// fixed set of Refill events (some brand new ids, one re-adding an existing
+// member), every ordering of those events yields the same final Members SET.
+func TestRefillOrderIndependentGrowth(t *testing.T) {
+	initial := State{Step: 0, K: 0, Members: members("a")}
+	refills := []Event{
+		{Kind: Refill, Worker: "b"},
+		{Kind: Refill, Worker: "c"},
+		{Kind: Refill, Worker: "a"}, // re-add of an existing member
+		{Kind: Refill, Worker: "d"},
+	}
+	wantSet := memberSet(members("a", "b", "c", "d"))
+
+	for _, order := range permutations(refills) {
+		gotS, _ := foldEvents(initial, order)
+		if gotSet := memberSet(gotS.Members); !reflect.DeepEqual(gotSet, wantSet) {
+			t.Fatalf("order %+v: final Members set = %+v, want %+v", order, gotSet, wantSet)
+		}
+	}
+}
+
+// TestRefillPropertyNeverCompletesBelowTheFloor enumerates, for a range of
+// MinMembers floors, refilling a growing prefix of a candidate worker pool
+// one at a time from an empty membership: at every point before Members
+// reaches MinMembers, Refill alone must never emit AllReduce/Release — the
+// floor still holds until enough members have refilled.
+func TestRefillPropertyNeverCompletesBelowTheFloor(t *testing.T) {
+	pool := members("a", "b", "c", "d", "e")
+
+	for minMembers := 1; minMembers <= len(pool); minMembers++ {
+		s := State{Step: 0, K: 0, MinMembers: minMembers,
+			LastCheckpoint: Checkpoint{Step: 0}}
+
+		for i, w := range pool {
+			var cmds []Command
+			s, cmds = step(s, Event{Kind: Refill, Worker: w}, 0)
+
+			survivors := i + 1
+			if hasOp(cmds, AllReduce) || hasOp(cmds, Release) {
+				t.Fatalf("MinMembers=%d survivors=%d: Refill alone emitted a completion command: %+v",
+					minMembers, survivors, cmds)
+			}
+			if survivors < minMembers && len(s.Members) >= minMembers {
+				t.Fatalf("MinMembers=%d survivors=%d: Members grew past expectation: %+v", minMembers, survivors, s.Members)
+			}
+		}
+	}
+}
+
+// TestLostThenRefillRestoresMembership confirms that losing a member and
+// then refilling the same id restores the original membership set, and that
+// this holds across every ordering of a batch of Lost/Refill pairs (removal
+// and re-addition of DIFFERENT workers commute; only same-worker Lost/Refill
+// pairs have an inherent order, which this test respects by never
+// permuting a pair's own two events relative to each other).
+func TestLostThenRefillRestoresMembership(t *testing.T) {
+	initial := State{Step: 4, K: 0, Members: members("a", "b", "c"),
+		Partials: partials("a", "pa"), LastCheckpoint: Checkpoint{Step: 4}}
+
+	// Two independent Lost->Refill pairs (for "b" and "c"); permuting the
+	// pairs relative to each other must not change the final membership.
+	pairA := []Event{{Kind: Lost, Worker: "b"}, {Kind: Refill, Worker: "b"}}
+	pairB := []Event{{Kind: Lost, Worker: "c"}, {Kind: Refill, Worker: "c"}}
+
+	orderings := [][]Event{
+		append(append([]Event{}, pairA...), pairB...),
+		append(append([]Event{}, pairB...), pairA...),
+	}
+
+	wantSet := memberSet(members("a", "b", "c"))
+	for _, evs := range orderings {
+		gotS, _ := foldEvents(initial, evs)
+		if gotSet := memberSet(gotS.Members); !reflect.DeepEqual(gotSet, wantSet) {
+			t.Fatalf("events %+v: final Members set = %+v, want %+v", evs, gotSet, wantSet)
 		}
 	}
 }
