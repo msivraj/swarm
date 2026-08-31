@@ -97,7 +97,7 @@ func New(st store.Store, cfg Config, now func() model.Instant) *Server {
 	if cfg.Logger == nil {
 		cfg.Logger = log.Printf
 	}
-	return &Server{
+	s := &Server{
 		store:         st,
 		cfg:           cfg,
 		now:           now,
@@ -118,6 +118,13 @@ func New(st store.Store, cfg Config, now func() model.Instant) *Server {
 		agentAddrs:      make(map[string]agentAddr),
 		cellAssignments: make(map[string]*transport.CellAssignmentResponse),
 	}
+	// Create + register the gRPC server here, once, before any goroutine or
+	// Stop can run — so s.grpcServer is immutable after construction. This
+	// removes the Serve-vs-Stop data race (and the Stop-before-Serve hang)
+	// on s.grpcServer that flaked -race CI (#129); Serve/Stop only ever read it.
+	s.grpcServer = grpc.NewServer()
+	transport.RegisterControlPlaneServer(s.grpcServer, s)
+	return s
 }
 
 // Serve registers the ControlPlane service on lis, starts the reaper,
@@ -125,9 +132,8 @@ func New(st store.Store, cfg Config, now func() model.Instant) *Server {
 // gRPC server stops (via Stop or lis closing). It returns the error
 // grpc.Server.Serve returns.
 func (s *Server) Serve(lis net.Listener) error {
-	s.grpcServer = grpc.NewServer()
-	transport.RegisterControlPlaneServer(s.grpcServer, s)
-
+	// s.grpcServer was created + registered in New (immutable since), so Serve
+	// and Stop only read it — no race.
 	s.wg.Add(3)
 	go s.reapLoop()
 	go s.mitosisLoop()
