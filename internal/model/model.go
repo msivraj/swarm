@@ -69,6 +69,11 @@ type Task struct {
 	// Requires lists the capabilities this task needs; nil means none
 	// required (P0/P1 behavior unchanged).
 	Requires CapSet
+	// Declared is the WASI capability set this task declares it needs when
+	// run in P3's open-tier sandbox (see internal/core/sandbox.Grants). The
+	// zero value declares nothing — no ambient authority — so P0-P2 tasks,
+	// which never set it, are unaffected.
+	Declared WasiCaps
 }
 
 // TaskResult is the outcome an agent reports for a Task.
