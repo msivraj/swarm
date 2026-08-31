@@ -58,10 +58,17 @@ func parseMinMembers(params map[string]string) int {
 // JobStatus/GetJob see a submitted gang job whether it is running or still
 // queued. SubmitJob itself never rejects a well-formed gang job for lack of
 // capacity; that is exactly what Wait/the pending queue is for.
+//
+// A Place whose activation failed (activateErr != nil — see admitGangLocked's
+// doc, #126) is exactly as un-runnable as a Wait, and is queued the same way:
+// its reservation is already committed and stays exactly as it is (nothing
+// here releases or re-reserves it), so a later retryPendingGangsLocked only
+// ever has to retry activation for it, against whatever the assigned cell's
+// membership looks like then.
 func (s *Server) submitGang(spec model.JobSpec) (*transport.SubmitJobResponse, error) {
 	s.mu.Lock()
-	g := s.admitGangLocked(spec)
-	if g.Kind != admission.Place {
+	g, activateErr := s.admitGangLocked(spec)
+	if g.Kind != admission.Place || activateErr != nil {
 		s.gangPending = append(s.gangPending, spec)
 	}
 	s.mu.Unlock()
@@ -76,7 +83,10 @@ func (s *Server) submitGang(spec model.JobSpec) (*transport.SubmitJobResponse, e
 // admitGangLocked calls admission.AdmitGang against the free capacity this
 // shell currently has to offer a gang (registry capacity net of every slot
 // already reserved for an earlier-admitted gang, see gangFreeCapacityLocked)
-// and, on Place, commits the decision via reserveGangLocked.
+// and, on Place, commits the decision via reserveGangLocked — unless job
+// already holds a live reservation (s.gangJobs), in which case admission
+// itself is skipped entirely and this only retries activation against it
+// (see the "already reserved" branch below, #126).
 //
 // reserveGangLocked re-validates each assignment against the live registry
 // at commit time rather than trusting the free numbers AdmitGang decided
@@ -88,33 +98,65 @@ func (s *Server) submitGang(spec model.JobSpec) (*transport.SubmitJobResponse, e
 // exactly as if AdmitGang itself had returned one. No caller of
 // admitGangLocked ever observes a partially reserved gang. Callers must
 // hold s.mu.
-func (s *Server) admitGangLocked(job model.JobSpec) admission.Gang {
+//
+// The returned error is activateCoupledCellLocked's, whenever it was
+// attempted (nil for a Wait, and nil for a Place that either was not a
+// Barrier/cell-activation request or activated cleanly) — it is already
+// fully handled here (surfaced via surfaceActivationFailureLocked, exactly
+// as before #126), but callers that manage the pending gang queue
+// (submitGang, retryPendingGangsLocked) need it too, to know a Place is not
+// actually runnable yet and must stay retryable.
+func (s *Server) admitGangLocked(job model.JobSpec) (admission.Gang, error) {
+	if r, ok := s.gangJobs[job.ID]; ok {
+		// job already holds a committed reservation from an earlier call
+		// that Placed it but whose activation failed (#126): re-running
+		// AdmitGang/reserveGangLocked here would reserve the same fleet
+		// capacity a second time (gangReserved would double-count it), so
+		// instead of re-admitting, only activation — the part that can
+		// change on its own as cell membership changes — is retried, against
+		// the exact assignments already committed.
+		g := admission.Gang{Kind: admission.Place, Assignments: r.assignments}
+		return g, s.activateAndSurfaceLocked(job, g)
+	}
+
 	free := s.gangFreeCapacityLocked()
 	g := admission.AdmitGang(job, free)
 	if g.Kind != admission.Place {
-		return g
+		return g, nil
 	}
 	if !s.reserveGangLocked(g.Assignments) {
-		return admission.Gang{Kind: admission.Wait}
+		return admission.Gang{Kind: admission.Wait}, nil
 	}
 	s.gangJobs[job.ID] = gangReservation{job: job, assignments: g.Assignments}
 	// A Barrier gang whose Params ask for cell activation (#98) gets its
 	// CellAssignments built right here, the single choke point every Place
 	// decision passes through whether it came from SubmitJob or a later
 	// retryPendingGangsLocked capacity-change retry. Activation failure
-	// (e.g. a malformed dist-training request) is not this gang's admission
-	// failing — the reservation above already committed, and gang.go's own
-	// contract ("SubmitJob never rejects a well-formed gang job for lack of
-	// capacity") extends to a request activation can't service either; there
-	// is no caller here (retry runs off the background loops, not an RPC) to
-	// return the error to. It is instead made visible without changing that
-	// admission outcome — logged, and recorded against the job so
-	// JobStatus/Ps can report why it will otherwise hang Done=false forever
-	// (see surfaceActivationFailureLocked, #113).
-	if err := s.activateCoupledCellLocked(job, g); err != nil {
+	// (e.g. a malformed dist-training request, or a cell momentarily short a
+	// member during churn) is not this gang's admission failing — the
+	// reservation above already committed, and gang.go's own contract
+	// ("SubmitJob never rejects a well-formed gang job for lack of
+	// capacity") extends to a request activation can't service (yet, or
+	// ever) either.
+	return g, s.activateAndSurfaceLocked(job, g)
+}
+
+// activateAndSurfaceLocked runs activateCoupledCellLocked for job/g and, on
+// error, makes it visible via surfaceActivationFailureLocked without
+// changing g's admission outcome — there is no caller here (retry runs off
+// the background loops, not an RPC) to return the error to as an RPC
+// failure. It is instead recorded against the job so JobStatus/Ps can report
+// why it will otherwise hang Done=false forever (see
+// surfaceActivationFailureLocked, #113), and the same error is handed back
+// to admitGangLocked's caller so a Place that is not actually runnable yet
+// stays on the pending gang queue for a later retry (#126) rather than
+// being treated as done. Callers must hold s.mu.
+func (s *Server) activateAndSurfaceLocked(job model.JobSpec, g admission.Gang) error {
+	err := s.activateCoupledCellLocked(job, g)
+	if err != nil {
 		s.surfaceActivationFailureLocked(job, err)
 	}
-	return g
+	return err
 }
 
 // gangFreeCapacityLocked projects the registry snapshot into the free
@@ -222,11 +264,23 @@ func cellFree(snap []model.CellView, id model.CellID) int {
 // must hold s.mu, and callers trigger this the same way drainPendingLocked
 // is already triggered for the Independent pending buffer: after any event
 // that can grow free capacity (JoinAgent, the mitosis tick).
+//
+// The head is popped only once it is actually runnable: g.Kind == Place AND
+// its activation (activateAndSurfaceLocked, run inside admitGangLocked)
+// succeeded. A Place whose activation errors — transiently, e.g. a coupled
+// cell momentarily short a member during churn, or permanently, e.g. a
+// structurally malformed request — is left at the head exactly as a Wait
+// is (#126): admitGangLocked already left its reservation standing (see its
+// "already reserved" branch) rather than releasing it, so nothing here is
+// leaked or double-reserved by trying again later, and this loop stops
+// scanning past it — a permanently-failing head retries (and fails) again
+// only the next time some other event calls this, never spinning within a
+// single call.
 func (s *Server) retryPendingGangsLocked() {
 	for len(s.gangPending) > 0 {
 		head := s.gangPending[0]
-		g := s.admitGangLocked(head)
-		if g.Kind != admission.Place {
+		g, activateErr := s.admitGangLocked(head)
+		if g.Kind != admission.Place || activateErr != nil {
 			return
 		}
 		s.gangPending = s.gangPending[1:]

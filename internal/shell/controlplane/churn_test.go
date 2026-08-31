@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/msivraj/swarm/internal/core/admission"
@@ -441,5 +442,183 @@ func TestCoupledCompletionNoChurnReleasesReservation(t *testing.T) {
 	}
 	if got := srv.gangReserved["cell-1"]; got != 0 {
 		t.Fatalf("gangReserved[cell-1] after completion = %d, want 0 (fully released)", got)
+	}
+}
+
+// TestStalledGangTransientActivationFailureStaysPendingThenSucceeds is
+// #126's headline repro and fix: a coupled gang loses a member (churn), and
+// the leader's stall report reaches the control plane BEFORE a same-cell
+// replacement joins — the exact ordering TestRefillReDecomposesOverCurrentCellMembers
+// avoids by having the refill land first. ReportCellStatus releases and
+// immediately retries the gang (H1-A), but activateCoupledCellLocked's
+// shard/agent-count mismatch (3 shards, 2 live members) is still transient:
+// the cell can regain its third member at any time.
+//
+// Before #126's fix, retryPendingGangsLocked popped the gang off
+// s.gangPending the moment admission alone Placed it, discarding it
+// regardless of activation failing right after — so the later replacement
+// join (agent-4) had nothing left in the queue to re-admit, and the gang
+// was stranded forever. This test asserts the gang instead stays on
+// s.gangPending (visibly failed, not dropped) with its reservation exact —
+// no leak, no double-count — across the failed retry, and that the very
+// next capacity-change event (agent-4 joining the same cell) succeeds and
+// actually activates and runs the gang to completion.
+func TestStalledGangTransientActivationFailureStaysPendingThenSucceeds(t *testing.T) {
+	clock := &testClock{}
+	cfg := fastConfig()
+	sink := &syncLogSink{}
+	cfg.Logger = sink.log
+	client, srv, teardown := newTestServer(t, cfg, clock)
+	defer teardown()
+	ctx := context.Background()
+
+	joinCoupledAgent(t, ctx, client, "agent-1", 100)
+	joinCoupledAgent(t, ctx, client, "agent-2", 1)
+	joinCoupledAgent(t, ctx, client, "agent-3", 1)
+
+	resp, err := client.SubmitJob(ctx, &transport.SubmitJobRequest{
+		Template: "dist-training",
+		Coupling: transport.Coupling_COUPLING_BARRIER,
+		Params: map[string]string{
+			"min_members": "3",
+			"samples":     "30",
+			"shards":      "3",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SubmitJob: %v", err)
+	}
+	jobID := model.JobID(resp.GetJobId())
+
+	srv.mu.Lock()
+	if len(srv.cellAssignments) != 3 {
+		srv.mu.Unlock()
+		t.Fatalf("cellAssignments before churn = %d, want 3", len(srv.cellAssignments))
+	}
+	reservedBefore := srv.gangReserved["cell-1"]
+	srv.mu.Unlock()
+	if reservedBefore != 3 {
+		t.Fatalf("gangReserved[cell-1] before churn = %d, want 3", reservedBefore)
+	}
+
+	// Member churn: agent-3 leaves cell-1 and nothing has replaced it yet —
+	// unlike TestRefillReDecomposesOverCurrentCellMembers, the stall report
+	// below arrives while the cell is still short a member.
+	srv.mu.Lock()
+	srv.applyRegistryEventLocked(registry.RegistryEvent{Kind: registry.AgentLeft, Cell: "cell-1", Agent: "agent-3"})
+	delete(srv.agentCell, "agent-3")
+	delete(srv.cellAgents["cell-1"], "agent-3")
+	srv.mu.Unlock()
+
+	statusResp, err := client.ReportCellStatus(ctx, &transport.CellStatusRequest{
+		JobId:   string(jobID),
+		AgentId: "agent-1",
+		Stalled: true,
+		Have:    2,
+		Need:    3,
+	})
+	if err != nil {
+		t.Fatalf("ReportCellStatus: %v", err)
+	}
+	if !statusResp.GetAccepted() {
+		t.Fatalf("ReportCellStatus.Accepted = false, want true")
+	}
+
+	// The bug: before #126, this gang would have vanished from gangPending
+	// here, its reservation stranded forever.
+	srv.mu.Lock()
+	if len(srv.gangPending) != 1 || srv.gangPending[0].ID != jobID {
+		srv.mu.Unlock()
+		t.Fatalf("gangPending = %+v, want exactly [%s] (transient activation failure must stay queued, not be dropped)", srv.gangPending, jobID)
+	}
+	if _, placed := srv.gangJobs[jobID]; !placed {
+		srv.mu.Unlock()
+		t.Fatalf("gangJobs no longer holds job %s, want its reservation kept live across the failed retry", jobID)
+	}
+	if got := srv.gangReserved["cell-1"]; got != 3 {
+		srv.mu.Unlock()
+		t.Fatalf("gangReserved[cell-1] after the failed retry = %d, want 3 (no leak, no double-count)", got)
+	}
+	srv.mu.Unlock()
+
+	logs := sink.snapshot()
+	found := false
+	for _, l := range logs {
+		if strings.Contains(l, string(jobID)) && strings.Contains(l, "shard(s)") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Logger never surfaced the transient activation failure for job %s, got %v", jobID, logs)
+	}
+	jobStatusResp, err := client.JobStatus(ctx, &transport.JobStatusRequest{JobId: string(jobID)})
+	if err != nil {
+		t.Fatalf("JobStatus: %v", err)
+	}
+	if jobStatusResp.GetDone() {
+		t.Fatalf("JobStatus.Done = true, want false (activation has not succeeded yet)")
+	}
+	if !strings.HasPrefix(string(jobStatusResp.GetAggregate()), "activation failed:") {
+		t.Fatalf("JobStatus.Aggregate = %q, want an activation-failed reason so the job does not look falsely idle", jobStatusResp.GetAggregate())
+	}
+
+	// The replacement joins the same cell: the very next capacity-change
+	// event retries the queue and this time activation succeeds.
+	joinCoupledAgent(t, ctx, client, "agent-4", 1)
+
+	srv.mu.Lock()
+	if len(srv.gangPending) != 0 {
+		srv.mu.Unlock()
+		t.Fatalf("gangPending = %+v, want empty (retry succeeded after the replacement joined)", srv.gangPending)
+	}
+	if _, placed := srv.gangJobs[jobID]; !placed {
+		srv.mu.Unlock()
+		t.Fatalf("gangJobs no longer holds job %s after the successful retry", jobID)
+	}
+	if got := srv.gangReserved["cell-1"]; got != 3 {
+		srv.mu.Unlock()
+		t.Fatalf("gangReserved[cell-1] after the successful retry = %d, want 3 (still no leak or double-count)", got)
+	}
+	srv.mu.Unlock()
+
+	// Assert the gang actually runs: its current members (agent-1, agent-2,
+	// agent-4) each have a fresh CellAssignment covering the full dataset.
+	wantMembers := []string{"agent-1", "agent-2", "agent-4"}
+	var union []idRange
+	for _, agent := range wantMembers {
+		assignResp, err := client.CellAssignment(ctx, &transport.CellAssignmentRequest{Agent: agent})
+		if err != nil {
+			t.Fatalf("CellAssignment(%s): %v", agent, err)
+		}
+		if !assignResp.GetHasAssignment() {
+			t.Fatalf("CellAssignment(%s).HasAssignment = false, want true (activated after the replacement joined)", agent)
+		}
+		if assignResp.GetJobId() != string(jobID) {
+			t.Fatalf("CellAssignment(%s).JobId = %q, want %q", agent, assignResp.GetJobId(), jobID)
+		}
+		start, end := decodeRange(assignResp.GetShardInput())
+		union = append(union, idRange{start: start, end: end})
+	}
+	assertContiguousFullCoverage(t, union, 30)
+
+	// And it can complete: ReportResult keyed by the job id (D6) flips Done.
+	reportResp, err := client.ReportResult(ctx, &transport.ReportResultRequest{
+		TaskId: string(jobID),
+		Output: templates.DistTrainingCombine([][]byte{make([]byte, 8), make([]byte, 8), make([]byte, 8)}),
+		Ok:     true,
+	})
+	if err != nil {
+		t.Fatalf("ReportResult: %v", err)
+	}
+	if !reportResp.GetAccepted() {
+		t.Fatalf("ReportResult not accepted")
+	}
+	finalStatus, err := client.JobStatus(ctx, &transport.JobStatusRequest{JobId: string(jobID)})
+	if err != nil {
+		t.Fatalf("JobStatus: %v", err)
+	}
+	if !finalStatus.GetDone() {
+		t.Fatalf("JobStatus.Done = false after completion, want true")
 	}
 }

@@ -3,6 +3,8 @@ package controlplane
 import (
 	"context"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -309,6 +311,105 @@ func TestNonGangSubmitPathUnchanged(t *testing.T) {
 	})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("SubmitJob(Barrier, no min_members) code = %v, want InvalidArgument (P0's admission.Admit path, unchanged)", status.Code(err))
+	}
+}
+
+// TestRetryPendingGangsPermanentActivationFailureStaysPendingNotDropped is
+// #126's "permanent" half: a structurally malformed dist-training gang
+// (shards > samples, so templates.DistTrainingDecompose can never succeed —
+// no membership change fixes it, unlike a shard/agent-count mismatch) is
+// still admitted (SubmitJob never rejects a well-formed-capacity-wise gang,
+// #71/#113) but never actually activates. Per #126's fix goal this is
+// surfaced (not silently dropped) and left sitting on the pending gang
+// queue rather than being popped and lost — retried again, and failing
+// again, on every later capacity-change event, without ever leaking or
+// double-counting its reservation, and without spinning inside a single
+// retryPendingGangsLocked call.
+func TestRetryPendingGangsPermanentActivationFailureStaysPendingNotDropped(t *testing.T) {
+	clock := &testClock{}
+	cfg := fastConfig()
+	sink := &syncLogSink{}
+	cfg.Logger = sink.log
+	client, srv, teardown := newTestServer(t, cfg, clock)
+	defer teardown()
+	ctx := context.Background()
+
+	joinCoupledAgent(t, ctx, client, "agent-1", 11)
+
+	resp, err := client.SubmitJob(ctx, &transport.SubmitJobRequest{
+		Template: "dist-training",
+		Coupling: transport.Coupling_COUPLING_BARRIER,
+		Params: map[string]string{
+			"min_members": "1",
+			"samples":     "2",
+			"shards":      "3", // shards > samples: partitionRange can never succeed
+		},
+	})
+	if err != nil {
+		t.Fatalf("SubmitJob: %v", err)
+	}
+	jobID := model.JobID(resp.GetJobId())
+
+	srv.mu.Lock()
+	if _, placed := srv.gangJobs[jobID]; !placed {
+		srv.mu.Unlock()
+		t.Fatalf("gang job %s was not placed, want admission to still succeed", jobID)
+	}
+	if len(srv.gangPending) != 1 || srv.gangPending[0].ID != jobID {
+		srv.mu.Unlock()
+		t.Fatalf("gangPending = %+v, want exactly [%s] (activation failed, must retry, not be dropped)", srv.gangPending, jobID)
+	}
+	reserved := srv.gangReserved["cell-1"]
+	srv.mu.Unlock()
+	if reserved != 1 {
+		t.Fatalf("gangReserved[cell-1] = %d, want 1", reserved)
+	}
+
+	statusResp, err := client.JobStatus(ctx, &transport.JobStatusRequest{JobId: string(jobID)})
+	if err != nil {
+		t.Fatalf("JobStatus: %v", err)
+	}
+	if statusResp.GetDone() {
+		t.Fatalf("JobStatus.Done = true, want false (activation can never succeed)")
+	}
+	if !strings.HasPrefix(string(statusResp.GetAggregate()), "activation failed:") {
+		t.Fatalf("JobStatus.Aggregate = %q, want an activation-failed reason, not a silent drop", statusResp.GetAggregate())
+	}
+
+	// Two more capacity-change events (unrelated joins) each retry the
+	// queue's head — this must neither pop/drop the job, nor leak or
+	// double-count its reservation, nor hang: each retryPendingGangsLocked
+	// call must return promptly (a permanently-failing head must stop the
+	// scan, not spin).
+	for i := 0; i < 2; i++ {
+		joinCoupledAgent(t, ctx, client, "agent-extra-"+strconv.Itoa(i), 1)
+
+		srv.mu.Lock()
+		if len(srv.gangPending) != 1 || srv.gangPending[0].ID != jobID {
+			srv.mu.Unlock()
+			t.Fatalf("retry %d: gangPending = %+v, want exactly [%s] (still stuck, still visible, never dropped)", i, srv.gangPending, jobID)
+		}
+		if _, placed := srv.gangJobs[jobID]; !placed {
+			srv.mu.Unlock()
+			t.Fatalf("retry %d: gangJobs no longer holds job %s", i, jobID)
+		}
+		if got := srv.gangReserved["cell-1"]; got != 1 {
+			srv.mu.Unlock()
+			t.Fatalf("retry %d: gangReserved[cell-1] = %d, want 1 (no leak, no double-count across repeated failed retries)", i, got)
+		}
+		srv.mu.Unlock()
+	}
+
+	logs := sink.snapshot()
+	found := false
+	for _, l := range logs {
+		if strings.Contains(l, string(jobID)) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Logger never surfaced the permanent activation failure for job %s, got %v", jobID, logs)
 	}
 }
 
