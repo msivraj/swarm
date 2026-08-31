@@ -54,6 +54,10 @@ type JobSpec struct {
 	// this many members placed together before it starts. 0 means the job
 	// is not a gang and has no floor (P0/P1 behavior unchanged).
 	MinMembers int
+	// Tier selects the trust/execution path: Core (default, zero value) is
+	// the existing trusted native path; Open routes the job through P3's
+	// WASM-sandboxed, quorum-verified path (P0-P2 behavior unchanged).
+	Tier Tier
 }
 
 // Task is one unit of independent work decomposed from a JobSpec.
