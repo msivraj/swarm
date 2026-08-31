@@ -188,6 +188,8 @@ func (a *Agent) runCellLeader(ctx context.Context) error {
 		StragglerInterval: a.cfg.CellLeader.StragglerInterval,
 		Now:               a.now,
 		Report:            a.reportCoupledCompletion,
+		ReportStatus:      a.reportCellStatus,
+		PollAssignment:    a.pollCellAssignment,
 	}
 	a.setCellLeaderHost(host)
 	return host.run(ctx)
@@ -274,6 +276,28 @@ func (a *Agent) reportCoupledCompletion(ctx context.Context, jobID string, combi
 	})
 }
 
+// reportCellStatus reports jobID's stalled/running status to the control
+// plane via ControlPlane.ReportCellStatus (H1's upward-notice RPC, issue
+// #121), mirroring reportCoupledCompletion's rpcRetry usage: a stall report
+// that silently failed to reach the control plane would leave this gang's
+// admission reservation stranded (see internal/shell/controlplane/
+// handlers.go's ReportCellStatus doc), so — like a completion report — this
+// keeps retrying a transient failure rather than losing the notice.
+func (a *Agent) reportCellStatus(ctx context.Context, jobID string, stalled bool, have, need int) error {
+	return a.rpcRetry(ctx, func(client transport.ControlPlaneClient) error {
+		resp, err := client.ReportCellStatus(ctx, &transport.CellStatusRequest{
+			JobId: jobID, AgentId: a.cfg.AgentID, Stalled: stalled, Have: int32(have), Need: int32(need),
+		})
+		if err != nil {
+			return err
+		}
+		if !resp.GetAccepted() {
+			return fmt.Errorf("agent: ReportCellStatus rejected for job %s", jobID)
+		}
+		return nil
+	})
+}
+
 // dialedConn is one cached follower connection a LeaderHost's TransportExecutor
 // dials AssignWork through.
 type dialedConn struct {
@@ -307,6 +331,24 @@ type LeaderHost struct {
 	// last step completes (D6). Required for completion to be observable —
 	// a nil Report just skips the notification, still stopping the loop.
 	Report func(ctx context.Context, jobID string, combined []byte) error
+
+	// ReportStatus delivers this term's stalled/running status upward to
+	// the control plane (H1's upward notice, issue #122; the RPC is #121's
+	// ReportCellStatus). Called exactly once per stall, from
+	// watchStragglers, the moment a Deadline fold ever produces OpStall
+	// (never for OpFail, which is terminal — there is nothing to refill). A
+	// nil ReportStatus just skips the notification, matching Report's own
+	// nil-is-a-no-op convention.
+	ReportStatus func(ctx context.Context, jobID string, stalled bool, have, need int) error
+
+	// PollAssignment re-polls this agent's own CellAssignment (issue #101)
+	// while a term is parked under its MinMembers floor (H1-C, issue #122)
+	// — a single RPC attempt, not a blocking loop: awaitCellAssignment
+	// already owns that shape for the FIRST assignment, and awaitRefill
+	// supplies its own retry cadence on top of this. A nil PollAssignment
+	// leaves a stalled term parked forever — the pre-#122 behavior —
+	// matching every other optional callback's nil-is-disabled convention.
+	PollAssignment func(ctx context.Context) (*transport.CellAssignmentResponse, error)
 
 	initOnce sync.Once
 	peerAddr map[string]string
@@ -561,15 +603,20 @@ func (h *LeaderHost) resetTermStatus() {
 // detection's fastest table entry (2s), matching the phase doc's "core +
 // barrier in seconds" pin.
 //
-// Once a Deadline fold ever produces OpStall or OpFail, this goroutine
-// stops: barrier has parked the run under the floor (or given up), and
-// re-checking a since-reset Step against members that have not been
-// re-assigned work yet (no refill/resume wiring exists for a stalled
-// barrier — issue #100 escalates that piece as a follow-up) would misread
-// "not yet re-assigned" as "still overdue" and evict survivors that were
-// never actually stragglers, cascading the whole membership toward zero.
-// Stopping here keeps this timer's blast radius the one behavior issue #100
-// actually asks for: evict, or stall-and-park — never a runaway collapse.
+// Once a Deadline fold ever produces OpFail, this goroutine stops for good:
+// barrier has given up, and re-checking a since-reset Step against members
+// that have not been re-assigned work yet would misread "not yet
+// re-assigned" as "still overdue" and evict survivors that were never
+// actually stragglers, cascading the whole membership toward zero.
+//
+// A Deadline fold that produces OpStall instead — barrier has parked the run
+// under the floor, not given up — reports the stall upward once
+// (reportStall, H1-A, issue #122) and hands off to awaitRefill, which polls
+// for a refilled assignment, resumes the parked step, and restarts a fresh
+// watchStragglers for the resumed term; THIS goroutine still stops here
+// either way, for the same reason an OpFail stops it: continuing to
+// straggler-check against a Step that has just been rolled back would evict
+// survivors that were never actually overdue for the (now current) step.
 func (h *LeaderHost) watchStragglers(ctx context.Context, loop *cell.Loop, srv *cell.Server) {
 	interval := h.StragglerInterval
 	if interval <= 0 {
@@ -604,7 +651,14 @@ func (h *LeaderHost) watchStragglers(ctx context.Context, loop *cell.Loop, srv *
 			return
 		}
 		if h.recordDeadlineOutcome(cmds) {
-			return // OpStall/OpFail observed — see the doc above.
+			// OpStall/OpFail observed — see the doc above. h.StallInfo()
+			// distinguishes the two: recordDeadlineOutcome only ever sets
+			// h.stalled for an OpStall, never for an OpFail.
+			if h.StallInfo().Stalled {
+				h.reportStall(ctx)
+				go h.awaitRefill(ctx, loop, srv)
+			}
+			return
 		}
 	}
 }
@@ -655,6 +709,190 @@ func (h *LeaderHost) recordDeadlineOutcome(cmds []cell.Command) bool {
 		}
 	}
 	return terminal
+}
+
+// reportStall delivers this term's stall notice to the control plane (H1's
+// upward notice, issue #122; the RPC is #121's ReportCellStatus). Called
+// exactly once per stall, from watchStragglers, immediately after
+// recordDeadlineOutcome records the OpStall this reports. A nil
+// ReportStatus just skips the call, matching Report/finish's own
+// nil-is-a-no-op convention.
+func (h *LeaderHost) reportStall(ctx context.Context) {
+	if h.ReportStatus == nil {
+		return
+	}
+	info := h.StallInfo()
+	_ = h.ReportStatus(ctx, h.jobID(), true, info.Have, info.Need)
+}
+
+// awaitRefill is H1-C's refill-poll goroutine (issue #122): spawned once
+// watchStragglers observes a stall, it re-polls PollAssignment — this
+// agent's own CellAssignment RPC (issue #101) — on StragglerInterval's
+// cadence until a response reports a peer set at least as large as its own
+// MinMembers floor (the refill signal), then attempts to resume the parked
+// run (resumeWithRefill). A poll that errors, reports no assignment yet, or
+// whose peer set still falls short of its own floor is treated exactly like
+// "not refilled yet" and simply retried on the next tick — as is a
+// resumeWithRefill that fails to actually grow membership past the floor
+// (e.g. a stale/unchanged response). Once resumeWithRefill succeeds, this
+// goroutine restarts watchStragglers for the resumed term and returns. A nil
+// PollAssignment (no refill wiring configured — e.g. a bare *LeaderHost a
+// unit test builds without one) leaves the run parked forever, matching
+// #100's pre-#122 behavior exactly. Stops silently once ctx is done.
+func (h *LeaderHost) awaitRefill(ctx context.Context, loop *cell.Loop, srv *cell.Server) {
+	if h.PollAssignment == nil {
+		return
+	}
+	interval := h.StragglerInterval
+	if interval <= 0 {
+		interval = defaultStragglerInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		resp, err := h.PollAssignment(ctx)
+		if err != nil || resp == nil || !resp.GetHasAssignment() {
+			continue
+		}
+		if len(resp.GetPeers()) < int(resp.GetMinMembers()) {
+			continue
+		}
+		if !hasUnknownPeer(loop, resp.GetPeers()) {
+			// Nothing in resp is missing from the barrier's CURRENT live
+			// Members — either nothing has changed since the last attempt
+			// (a still-stale poll), or an earlier attempt already folded
+			// everything resp offers back in (see resumeWithRefill's
+			// idempotent Refill loop) without yet clearing the stall (its
+			// re-kick failed — e.g. a member resp still optimistically
+			// lists is not actually reachable). Either way, re-attempting
+			// with the SAME information again would be a no-op; wait for
+			// the next poll instead of busy-looping.
+			continue
+		}
+		if h.resumeWithRefill(ctx, loop, resp) {
+			go h.watchStragglers(ctx, loop, srv)
+			return
+		}
+	}
+}
+
+// hasUnknownPeer reports whether peers contains an agent id NOT currently in
+// loop's live barrier.State.Members — the refill signal awaitRefill acts
+// on: an evicted (or never-yet-known) member reappearing in a polled
+// CellAssignment, growing membership back toward MinMembers (H1-C). This is
+// deliberately a LIVE comparison against loop's own current State, not a
+// comparison against some earlier/original assignment: an evicted member is
+// by definition missing from Members, so ANY poll that still lists it — the
+// common case for a same-cell straggler, since a leader-local eviction
+// never itself shrinks the control plane's own registry-derived Peers (see
+// cellactivation.go) — is correctly treated as something worth attempting a
+// refill for, without needing the control plane to have re-decomposed
+// anything at all.
+func hasUnknownPeer(loop *cell.Loop, peers []*transport.CellPeer) bool {
+	bs, ok := loop.State().(barrier.State)
+	if !ok {
+		return false
+	}
+	known := make(map[barrier.WorkerID]bool, len(bs.Members))
+	for _, w := range bs.Members {
+		known[w] = true
+	}
+	for _, p := range peers {
+		if !known[barrier.WorkerID(p.GetAgentId())] {
+			return true
+		}
+	}
+	return false
+}
+
+// resumeWithRefill folds one EventRefill (barrier's Refill, issue #117's
+// core) per resp.Peers member not already in loop's current
+// barrier.State.Members — replicating each grown-membership AddMember
+// through raft exactly like any other command (H1-B) — then re-kicks the
+// current step (H1-D): stepDeadline's own stall() (internal/core/
+// barrier.go) already rolled the live State back to LastCheckpoint's step
+// and cleared Partials the moment it stalled, so loop's own State() is
+// already "at the last checkpoint," and combinedForStep reproduces exactly
+// the payload that step's original AssignWork carried — the same re-kick
+// onBecomeLeader performs after a Resume, replayed here without a raft
+// leadership change (reusing combinedForStep exactly as onBecomeLeader's
+// own kick does, since the live state plays the role buildState/
+// logAfterCheckpoint's Resume path would otherwise reconstruct from a
+// checkpoint + log a newly-elected leader has to rebuild from scratch).
+// It also refreshes peerAddr from resp's Peers so a refilled (or
+// previously-unknown) worker's AssignWork can be dialed.
+//
+// Returns false — a no-op the caller (awaitRefill) keeps polling past — if
+// resp's peers still fall short of the live state's own MinMembers floor
+// even after every one of them has been folded back in (a stale/unchanged
+// resp), or if replaying a Refill or re-kicking failed.
+func (h *LeaderHost) resumeWithRefill(ctx context.Context, loop *cell.Loop, resp *transport.CellAssignmentResponse) bool {
+	h.refreshPeerAddrs(resp.GetPeers())
+
+	bs, ok := loop.State().(barrier.State)
+	if !ok {
+		return false
+	}
+	present := make(map[barrier.WorkerID]bool, len(bs.Members))
+	for _, w := range bs.Members {
+		present[w] = true
+	}
+	for _, p := range resp.GetPeers() {
+		w := barrier.WorkerID(p.GetAgentId())
+		if present[w] {
+			continue
+		}
+		if _, err := loop.Handle(ctx, cell.Event{Kind: cell.EventRefill, Worker: w}, h.Now()); err != nil {
+			return false
+		}
+	}
+
+	bs, ok = loop.State().(barrier.State)
+	if !ok || (bs.MinMembers > 0 && len(bs.Members) < bs.MinMembers) {
+		return false
+	}
+
+	payload := combinedForStep(h.Node.Log(), bs.Step)
+	if err := loop.Exec.Exec(ctx, []cell.Command{
+		{Op: cell.OpAllReduce, Combined: payload},
+		{Op: cell.OpRelease, Step: bs.Step},
+	}); err != nil {
+		return false
+	}
+
+	// Only now — after the re-kick has actually gone out successfully — is
+	// this term genuinely no longer stalled; clearing it any earlier would
+	// misreport "running" for a re-kick that itself failed (e.g. a
+	// still-unreachable member resp.Peers optimistically listed).
+	h.mu.Lock()
+	h.stalled = false
+	h.stallHave, h.stallNeed = 0, 0
+	h.mu.Unlock()
+	return true
+}
+
+// refreshPeerAddrs rebuilds the peer -> cell_leader_addr lookup dialWorker
+// reads from peers (a refreshed CellAssignment's Peers, issue #122's H1-C
+// refill) — the AssignWork dial-address half of "rebuild the AssignWork
+// membership/shard inputs from the refreshed assignment" (membership itself
+// is TransportExecutor.Members's own live read of loop's current
+// barrier.State.Members, see membersFunc — already refreshed the moment
+// resumeWithRefill folds a Refill in, no separate step needed for it).
+func (h *LeaderHost) refreshPeerAddrs(peers []*transport.CellPeer) {
+	addr := make(map[string]string, len(peers))
+	for _, p := range peers {
+		addr[p.GetAgentId()] = p.GetCellLeaderAddr()
+	}
+	h.mu.Lock()
+	h.peerAddr = addr
+	h.mu.Unlock()
 }
 
 // Evicted returns the barrier worker ids this term's straggler-eviction
@@ -772,7 +1010,10 @@ func (h *LeaderHost) membersFunc() func() []string {
 
 // dialWorker resolves worker (an agent id) to its assignment-advertised
 // cell_leader_addr and dials it, caching the connection for reuse across
-// steps — TransportExecutor.Dial's production implementation.
+// steps — TransportExecutor.Dial's production implementation. peerAddr is
+// read under h.mu (not write-once since issue #122's refreshPeerAddrs can
+// replace it mid-run, on a same-cell refill), matching every other field
+// dialWorker already reads that way (conns, dialCtx).
 func (h *LeaderHost) dialWorker(worker string) (transport.CellLeaderClient, error) {
 	h.mu.Lock()
 	if c, ok := h.conns[worker]; ok {
@@ -780,9 +1021,9 @@ func (h *LeaderHost) dialWorker(worker string) (transport.CellLeaderClient, erro
 		return c.client, nil
 	}
 	dialCtx := h.dialCtx
+	addr, ok := h.peerAddr[worker]
 	h.mu.Unlock()
 
-	addr, ok := h.peerAddr[worker]
 	if !ok || addr == "" {
 		return nil, fmt.Errorf("cell leader: no cell_leader_addr advertised for worker %s", worker)
 	}

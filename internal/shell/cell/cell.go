@@ -45,6 +45,11 @@ const (
 	EventRestored
 	// EventGiveUp — barrier: a give-up timeout fired on a stalled barrier.
 	EventGiveUp
+	// EventRefill — barrier: a member rejoins a same-cell barrier (issue
+	// #117's core Refill event; issue #122's shell wiring — LeaderHost's
+	// H1-C refill-poll, internal/shell/agent/leader.go), growing membership
+	// back toward MinMembers after a Stall.
+	EventRefill
 	// EventReport — leader: a follower reported its result for the superstep.
 	EventReport
 	// EventRoundTimeout — leader: the per-superstep deadline fired.
@@ -72,7 +77,8 @@ const (
 type Event struct {
 	Kind EventKind
 
-	// barrier: EventDone, EventLost, EventRestored, EventDeadline, EventGiveUp
+	// barrier: EventDone, EventLost, EventRestored, EventDeadline,
+	// EventGiveUp, EventRefill
 	Worker  barrier.WorkerID
 	Partial []byte             // EventDone
 	Ckpt    barrier.Checkpoint // EventRestored
@@ -109,6 +115,13 @@ const (
 	OpStall
 	// OpFail — barrier: a give-up timeout fired; terminal (BarrierCkpt preserved).
 	OpFail
+	// OpAddMember — barrier: Worker was added back to membership by an
+	// EventRefill (issue #117's core, issue #122's shell wiring).
+	// Replicated through the log like every other command so a
+	// BarrierDriver.Resume replay after failover reconstructs the grown
+	// membership deterministically instead of a shell-side out-of-band
+	// mutation of State.Members.
+	OpAddMember
 
 	// OpAssign — leader: hand Follower its Work for a superstep.
 	OpAssign
@@ -139,7 +152,7 @@ type Command struct {
 	// barrier
 	Partials    map[barrier.WorkerID][]byte // OpAllReduce
 	Step        int                         // OpRelease, OpCheckpoint
-	Worker      barrier.WorkerID            // OpEvict
+	Worker      barrier.WorkerID            // OpEvict, OpAddMember
 	BarrierCkpt barrier.Checkpoint          // OpRollback, OpFail
 	Have, Need  int                         // OpStall
 

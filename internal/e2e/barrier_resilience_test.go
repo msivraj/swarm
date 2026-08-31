@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -597,6 +598,206 @@ func TestBarrier_LeaderAgentFailover(t *testing.T) {
 	// killed agent's follower loop kept serving its own shard the whole
 	// time (killCellLeader's doc) — so all `numAgents` shards still fold
 	// into the final Aggregate.
+	want := expectedDistTrainingAggregate(shardRanges, steps)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Aggregate = %v, want %v (expectedDistTrainingAggregate)", got, want)
+	}
+}
+
+// startRecoveringAgent is startResilientAgent's shape (full coupled duty:
+// Follower + CellLeader, real worker exec, a shared checkpoint store) with
+// one difference issue #122's refill/resume scenario needs beyond every
+// #100 straggler scenario (none of which ever recover, by design — see
+// TestBarrier_SubFloorParks's own doc): its worker hangs on its VERY FIRST
+// AssignWork-triggered call only — blocking on THIS agent's OWN top-level
+// ctx, never the inbound RPC's own per-call one, for the exact same
+// GracefulStop-deadlock reason startResilientAgent's own doc gives for its
+// straggle knob — and execs the real worker binary normally on every call
+// after that. A same-cell straggler that gets evicted by the leader's own
+// straggler-eviction timer and then genuinely recovers is the common H1-C
+// refill shape: the control plane's own registry membership for this cell
+// never shrinks just because a LEADER-LOCAL eviction dropped this agent
+// from the barrier's live State (see leader.go's hasUnknownPeer doc), so
+// nothing but this agent's own worker actually recovering can ever
+// un-park the run.
+func startRecoveringAgent(t *testing.T, id string, dial agent.Dialer, worker, raftAddr, followerAddr string, raftCfg *raft.Config, ckptStore cell.CheckpointStore) *agent.Agent {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var mu sync.Mutex
+	first := true
+	workerFn := func(callCtx context.Context, in []byte) ([]byte, bool) {
+		mu.Lock()
+		isFirst := first
+		first = false
+		mu.Unlock()
+
+		if isFirst {
+			<-ctx.Done()
+			return nil, false
+		}
+
+		cmd := exec.CommandContext(callCtx, worker) //nolint:gosec // worker is this test's own built worker binary
+		cmd.Stdin = bytes.NewReader(in)
+		var stdout bytes.Buffer
+		cmd.Stdout = &stdout
+		if err := cmd.Run(); err != nil {
+			return nil, false
+		}
+		return stdout.Bytes(), true
+	}
+
+	a := agent.New(agent.Config{
+		AgentID:           id,
+		Region:            "us",
+		Caps:              1,
+		Targets:           []string{"bufnet"},
+		Dialer:            dial,
+		Jitter:            func() float64 { return 0 },
+		HeartbeatInterval: 200 * time.Millisecond,
+		PullInterval:      100 * time.Millisecond,
+		Process:           agent.ProcessSpec{Argv: []string{worker}},
+		Follower: agent.FollowerConfig{
+			Listen: followerAddr,
+			Worker: workerFn,
+		},
+		CellLeader: agent.CellLeaderConfig{
+			RaftListen:  raftAddr,
+			RaftDataDir: t.TempDir(),
+			RaftConfig:  raftCfg,
+			Checkpoint:  ckptStore,
+		},
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			requireCleanOrDroppedAgentShutdown(t, id, err)
+		case <-time.After(10 * time.Second):
+			t.Errorf("agent %s Run did not return within 10s of cancellation", id)
+		}
+	})
+
+	return a
+}
+
+// TestBarrier_SameCellRefillResumes is issue #122's headline end-to-end
+// acceptance criterion, extending #100's resilience harness through real
+// swarmd: a dist-training job driven sub-floor by a genuine straggler
+// PARKS (the same MinMembers-floor stall TestBarrier_SubFloorParks
+// exercises, #100) — its gang reservation is released and the pending
+// queue retried (H1-A, ReportCellStatus, #116, a real wire round trip to
+// the real control plane this test stands up) — then, once the straggler's
+// own worker recovers, the elected leader's own refill-poll (H1-C,
+// LeaderHost.awaitRefill/resumeWithRefill) picks it back up automatically
+// — no further test-driven action — replicates a Refill for it, and
+// resumes the parked step from its last checkpoint, completing the job
+// with the CORRECT all-reduced result over the full dataset, independently
+// computed exactly as #99/#100's other scenarios compute theirs.
+//
+// Resolved scope note: a SEPARATE same-cell shape — a member's entire
+// PROCESS genuinely dying and a brand-new agent joining as its replacement
+// — was also attempted for this ticket and found to be blocked by a real
+// gap in the already-merged control plane (#116), not anything in this
+// ticket's own scope: gang.go's retryPendingGangsLocked/admitGangLocked
+// permanently pops a gang off the pending queue the moment
+// admission.AdmitGang's OWN (registry-room, not live-member-count) capacity
+// check succeeds, even when the immediately-following
+// activateCoupledCellLocked re-decompose fails (a transient peer-count/
+// shard-count mismatch, exactly the window between a member being reaped
+// and its replacement joining) — stranding the reservation with no further
+// retry, ever, for that job. This was escalated (issue #122, needs-human)
+// with this precise root cause rather than routed around here; the
+// scenario this test DOES exercise — a straggler evicted and refilled
+// without any control-plane-visible membership change — is unaffected by
+// that gap and is exactly H1-C's own documented common case.
+func TestBarrier_SameCellRefillResumes(t *testing.T) {
+	worker := buildWorker(t, "./workers/disttraining", "disttraining")
+
+	clock := &testClock{}
+	client, dial, teardown := newControlPlane(t, fastConfig(), clock)
+	defer teardown()
+
+	const (
+		numAgents  = 3
+		samples    = uint64(300)
+		shards     = numAgents
+		steps      = 2
+		checkpoint = 1
+		minMembers = numAgents // every member required — the straggler alone stalls it
+	)
+
+	ckptStore := cell.NewMemCheckpointStore()
+
+	agents := make([]*agent.Agent, numAgents)
+	for i := 0; i < numAgents; i++ {
+		id := fmt.Sprintf("rf-agent-%d", i)
+		raftCfg := fastRaftConfig()
+		raftAddr := freeTCPAddr(t)
+		followerAddr := freeTCPAddr(t)
+		if i == numAgents-1 {
+			// The LEXICOGRAPHICALLY LAST agent is the one that straggles
+			// then recovers — TransportExecutor.assignAll dispatches to
+			// bs.Members sequentially, so this lets the other two complete
+			// their own real StepReports first (see
+			// TestBarrier_StragglerEvicted's doc), rather than starving a
+			// member assignAll never got a chance to even dispatch to.
+			agents[i] = startRecoveringAgent(t, id, dial, worker, raftAddr, followerAddr, raftCfg, ckptStore)
+			continue
+		}
+		agents[i] = startResilientAgent(t, id, dial, worker, raftAddr, followerAddr, raftCfg, ckptStore, false, 0)
+	}
+
+	waitForAgentsJoined(t, client, numAgents)
+	jobID := submitBarrierJob(t, client, samples, shards, steps, checkpoint, minMembers)
+
+	// The job PARKS: poll for a stall status on whichever agent hosts the
+	// cell's leadership — never all-reducing the surviving (numAgents-1)-
+	// of-numAgents fraction (mirrors TestBarrier_SubFloorParks).
+	var info agent.StallInfo
+	waitFor(t, 15*time.Second, func() bool {
+		for _, a := range agents {
+			host := a.CellLeaderHost()
+			if host == nil {
+				continue
+			}
+			if si := host.StallInfo(); si.Stalled {
+				info = si
+				return true
+			}
+		}
+		return false
+	})
+	if info.Have != numAgents-1 {
+		t.Fatalf("StallInfo.Have = %d, want %d", info.Have, numAgents-1)
+	}
+	if info.Need != minMembers {
+		t.Fatalf("StallInfo.Need = %d, want %d", info.Need, minMembers)
+	}
+	if !info.Rollback {
+		t.Fatalf("StallInfo.Rollback = false, want true — a stall must roll back, never all-reduce the surviving fraction")
+	}
+
+	// The straggler's own worker recovers on its SECOND AssignWork call
+	// (startRecoveringAgent's doc) — nothing here drives that; the elected
+	// leader's own refill-poll issues that second call automatically once
+	// it next polls CellAssignment (H1-C) and resumes, completing the job.
+	status := waitForCoupledJobDone(t, client, jobID, 30*time.Second)
+	if !status.GetDone() {
+		t.Fatalf("JobStatus.Done = false, want true")
+	}
+
+	got, ok := DecodeGradient(status.GetAggregate())
+	if !ok {
+		t.Fatalf("Aggregate = %x, not a valid gradient", status.GetAggregate())
+	}
+
+	shardRanges := dtShardRanges(t, jobID, samples, shards)
 	want := expectedDistTrainingAggregate(shardRanges, steps)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Aggregate = %v, want %v (expectedDistTrainingAggregate)", got, want)
