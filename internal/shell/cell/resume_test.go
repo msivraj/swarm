@@ -207,6 +207,108 @@ func TestResume_Barrier_EmptyLog(t *testing.T) {
 	}
 }
 
+// TestResume_Barrier_RefillAfterCheckpoint is issue #122's adapter
+// acceptance criterion: a command log containing an OpAddMember recorded
+// AFTER the last checkpoint — a same-cell refill (issue #117's Refill event,
+// issue #122's LeaderHost feeding it through the loop, see leader.go's
+// resumeWithRefill) — is replayed by BarrierDriver.Resume to reconstruct the
+// grown Members, the failover determinism a newly elected leader depends on
+// after a refill.
+//
+// As with TestResume_Barrier_Failover, the checkpoint here is produced by
+// driving a real Loop through the production checkpoint-write path, not a
+// hand-built checkpoint.State.
+func TestResume_Barrier_RefillAfterCheckpoint(t *testing.T) {
+	driver := BarrierDriver{}
+	initial := barrier.State{Step: 0, K: 1, MinMembers: 2, Members: []barrier.WorkerID{"a", "b"}}
+
+	store := NewMemCheckpointStore()
+	te := &TransportExecutor{JobID: "job-1", Checkpoint: store}
+	rec := &RecordingExecutor{Next: te}
+	loop := NewLoop(driver, initial, rec, nil)
+	te.Driver = driver
+	te.State = loop.State
+
+	ctx := context.Background()
+	handle := func(ev Event) {
+		if _, err := loop.Handle(ctx, ev, 0); err != nil {
+			t.Fatalf("Handle(%+v): %v", ev, err)
+		}
+	}
+
+	// Complete step 0 with just "a"/"b" — checkpoints via the real write
+	// path (K=1, every step).
+	handle(Event{Kind: EventDone, Worker: "a", Partial: []byte("pa0")})
+	handle(Event{Kind: EventDone, Worker: "b", Partial: []byte("pb0")}) // completes step 0 -> Checkpoint{0}, Release{1}
+
+	ckpt, ok := store.Last("job-1")
+	if !ok {
+		t.Fatalf("no checkpoint was persisted by the real write path")
+	}
+	preCheckpointLogLen := len(rec.Snapshot())
+
+	// A member rejoins AFTER the checkpoint (a same-cell refill).
+	handle(Event{Kind: EventRefill, Worker: "c"})
+
+	preLossState := loop.State().(barrier.State)
+	fullLog := rec.Snapshot()
+	logAfterCheckpoint := append([]Command(nil), fullLog[preCheckpointLogLen:]...)
+
+	// Sanity: the log actually carries the OpAddMember this test means to
+	// exercise, not some other command.
+	foundAddMember := false
+	for _, c := range logAfterCheckpoint {
+		if c.Op == OpAddMember && c.Worker == "c" {
+			foundAddMember = true
+		}
+	}
+	if !foundAddMember {
+		t.Fatalf("logAfterCheckpoint = %#v, want an OpAddMember{Worker: c}", logAfterCheckpoint)
+	}
+
+	rebuilt := driver.Resume(logAfterCheckpoint, ckpt).(barrier.State)
+	if !reflect.DeepEqual(rebuilt, preLossState) {
+		t.Fatalf("Resume rebuilt state = %#v, want the pre-loss state %#v", rebuilt, preLossState)
+	}
+	wantMembers := []barrier.WorkerID{"a", "b", "c"}
+	if !reflect.DeepEqual(rebuilt.Members, wantMembers) {
+		t.Fatalf("rebuilt Members = %v, want %v (grown by the post-checkpoint refill)", rebuilt.Members, wantMembers)
+	}
+}
+
+// TestApplyBarrierCommand_AddMemberIdempotent is a small law test on
+// applyBarrierCommand's own OpAddMember case (adapter_barrier.go): replaying
+// it for a worker already present must not duplicate it — the
+// "idempotent" requirement issue #122's ticket names for the copy-on-write
+// append, exercised directly since a re-elected leader can legitimately
+// replay the SAME post-checkpoint log suffix twice (e.g. another failover
+// before its own next checkpoint).
+func TestApplyBarrierCommand_AddMemberIdempotent(t *testing.T) {
+	bs := barrier.State{Members: []barrier.WorkerID{"a", "b"}}
+
+	bs = applyBarrierCommand(bs, Command{Op: OpAddMember, Worker: "b"})
+	if !reflect.DeepEqual(bs.Members, []barrier.WorkerID{"a", "b"}) {
+		t.Fatalf("applyBarrierCommand(OpAddMember, already-present) Members = %v, want unchanged [a b]", bs.Members)
+	}
+
+	bs = applyBarrierCommand(bs, Command{Op: OpAddMember, Worker: "c"})
+	if !reflect.DeepEqual(bs.Members, []barrier.WorkerID{"a", "b", "c"}) {
+		t.Fatalf("applyBarrierCommand(OpAddMember, new) Members = %v, want [a b c]", bs.Members)
+	}
+
+	// The copy-on-write discipline: applying to bs must never mutate a
+	// slice a caller still holds a reference to.
+	original := []barrier.WorkerID{"x"}
+	untouched := barrier.State{Members: original}
+	grown := applyBarrierCommand(untouched, Command{Op: OpAddMember, Worker: "y"})
+	if len(original) != 1 || original[0] != "x" {
+		t.Fatalf("applyBarrierCommand(OpAddMember) mutated the caller's Members slice: %v", original)
+	}
+	if !reflect.DeepEqual(grown.Members, []barrier.WorkerID{"x", "y"}) {
+		t.Fatalf("grown.Members = %v, want [x y]", grown.Members)
+	}
+}
+
 // TestResume_Leader_Failover mirrors TestResume_Barrier_Failover for the
 // leader driver: Resume from a checkpoint + post-checkpoint log reconstructs
 // the same Superstep an uninterrupted run reaches.

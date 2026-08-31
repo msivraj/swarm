@@ -17,6 +17,7 @@ import (
 	"github.com/msivraj/swarm/internal/core/barrier"
 	"github.com/msivraj/swarm/internal/core/templates"
 	"github.com/msivraj/swarm/internal/e2e"
+	"github.com/msivraj/swarm/internal/model"
 	"github.com/msivraj/swarm/internal/shell/cell"
 	"github.com/msivraj/swarm/internal/shell/transport"
 )
@@ -89,11 +90,37 @@ type fakeCellFollower struct {
 	dialer  CellLeaderDialer
 	partial func(step int32) []byte
 
-	mu      sync.Mutex
-	assigns []assignedStep
+	// hangFirstCall, if true, makes this follower's FIRST AssignWork call
+	// block until ctx is done (never itself resolving) — standing in for a
+	// stuck/unresponsive real worker that gets evicted as a straggler and
+	// never itself recovers, the in-process analogue of internal/e2e's
+	// straggle knob, for issue #122's refill/resume unit test
+	// (TestLeaderHost_StallReportsThenRefillResumes). Every call AFTER the
+	// first behaves normally — a post-refill re-kick issues a FRESH
+	// AssignWork call, never a retry of the original (still-pending) one,
+	// so this is the realistic shape of "the same worker recovers": a new
+	// request succeeds; the orphaned original is simply abandoned, exactly
+	// as it would be against a real, no-longer-stuck process. false (every
+	// other test in this file) never blocks, matching this type's pre-#122
+	// behavior exactly.
+	hangFirstCall bool
+
+	mu        sync.Mutex
+	assigns   []assignedStep
+	callCount int
 }
 
 func (f *fakeCellFollower) AssignWork(ctx context.Context, req *transport.AssignWorkRequest) (*transport.AssignWorkResponse, error) {
+	f.mu.Lock()
+	f.callCount++
+	first := f.callCount == 1
+	f.mu.Unlock()
+
+	if first && f.hangFirstCall {
+		<-ctx.Done()
+		return &transport.AssignWorkResponse{Accepted: false}, nil
+	}
+
 	leaderAddr, incoming, ok := decodeAssignWorkPayload(req.GetPayload())
 	if !ok {
 		return &transport.AssignWorkResponse{Accepted: false}, nil
@@ -501,5 +528,186 @@ func TestCellLeader_InertWhenUnconfigured(t *testing.T) {
 	cancel()
 	if err := <-runErr; err != nil {
 		t.Fatalf("Run() = %v, want nil after ctx cancellation", err)
+	}
+}
+
+// statusReport is a plain-data copy of one LeaderHost.ReportStatus call's
+// arguments (issue #122's H1-A upward notice), delivered over a channel/
+// slice for tests to assert on — mirrors coupledCompletion's role for
+// Report.
+type statusReport struct {
+	JobID   string
+	Stalled bool
+	Have    int
+	Need    int
+}
+
+// waitForCondition polls cond until it reports true or timeout elapses,
+// failing the test on timeout — this file's own small analogue of
+// internal/e2e's waitFor, kept local since this package's tests otherwise
+// never need a generic poll helper.
+func waitForCondition(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !cond() {
+		t.Fatalf("condition not met within %s", timeout)
+	}
+}
+
+// TestLeaderHost_StallReportsThenRefillResumes is issue #122's headline
+// acceptance criterion: a barrier driven below MinMembers (one member
+// stuck, evicted by the straggler-eviction timer) reports its stall exactly
+// once via ReportStatus with the correct have/need, then — once a refreshed
+// CellAssignment poll (PollAssignment) reports a peer set back at
+// MinMembers — a Refill (OpAddMember) is replicated for the evicted member,
+// the parked step resumes, and the job completes with every member's
+// contribution once the stuck one stops being stuck.
+func TestLeaderHost_StallReportsThenRefillResumes(t *testing.T) {
+	const (
+		steps      = 2
+		minMembers = 3
+	)
+
+	followers, peers := buildFakeCell(t, 2) // "a", "b" — instant responders
+
+	// "c" hangs on its FIRST AssignWork call — the straggler
+	// watchStragglers evicts, stalling the barrier under the floor — and
+	// responds normally on every call after that: a worker that recovers,
+	// the common same-cell refill shape (the control plane's own
+	// registry membership for this cell never shrinks just because a
+	// leader-local straggler timer evicted "c" from the barrier's own live
+	// State — see hasUnknownPeer's doc, leader.go — so PollAssignment
+	// keeps re-serving the SAME (already >=MinMembers) Peers the whole
+	// time; the refill signal is "c" still being listed despite no longer
+	// being a current Member, not the control plane ever handing out a
+	// DIFFERENT peer set).
+	stuck := &fakeCellFollower{
+		id:            "c",
+		dialer:        dialCellLeader,
+		hangFirstCall: true,
+		partial:       func(step int32) []byte { return e2e.EncodeGradient([]float64{float64(step) + 1}) },
+	}
+	addr := startCellLeaderServer(t, stuck)
+	followers["c"] = stuck
+	peers = append(peers, &transport.CellPeer{AgentId: "c", CellLeaderAddr: addr})
+
+	assignment := &transport.CellAssignmentResponse{
+		HasAssignment: true,
+		JobId:         "job-refill",
+		K:             0,
+		MinMembers:    minMembers,
+		Steps:         steps,
+		Peers:         peers,
+	}
+
+	node := newFakeRaftNode()
+	reportCh := make(chan coupledCompletion, 1)
+
+	var mu sync.Mutex
+	var statusCalls []statusReport
+
+	host := &LeaderHost{
+		Node:       node,
+		Assignment: assignment,
+		Listen:     "127.0.0.1:0",
+		Dialer:     dialCellLeader,
+		// A real wall clock (like agent.RealClock, agent.go) rather than
+		// the package default (a constant zero) — watchStragglers'
+		// straggler/deadline check (anyOverdue) needs Now to actually
+		// advance in real time for detection.Deadline(Core, Barrier)'s 2s
+		// threshold to ever trip.
+		Now:               func() model.Instant { return model.Instant(time.Now().UnixNano()) },
+		StragglerInterval: 20 * time.Millisecond,
+		Report: func(_ context.Context, jobID string, combined []byte) error {
+			reportCh <- coupledCompletion{JobID: jobID, Combined: combined}
+			return nil
+		},
+		ReportStatus: func(_ context.Context, jobID string, stalled bool, have, need int) error {
+			mu.Lock()
+			statusCalls = append(statusCalls, statusReport{JobID: jobID, Stalled: stalled, Have: have, Need: need})
+			mu.Unlock()
+			return nil
+		},
+		PollAssignment: func(context.Context) (*transport.CellAssignmentResponse, error) {
+			return assignment, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- host.run(ctx) }()
+	node.leaderCh <- true
+
+	// Wait for the stall: exactly one ReportStatus call, have=2 (a, b —
+	// survivors) / need=3 (MinMembers).
+	waitForCondition(t, 10*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(statusCalls) >= 1
+	})
+	mu.Lock()
+	calls := append([]statusReport(nil), statusCalls...)
+	mu.Unlock()
+	if len(calls) != 1 {
+		t.Fatalf("ReportStatus calls = %+v, want exactly 1", calls)
+	}
+	want := statusReport{JobID: "job-refill", Stalled: true, Have: 2, Need: minMembers}
+	if calls[0] != want {
+		t.Fatalf("ReportStatus call = %+v, want %+v", calls[0], want)
+	}
+
+	// The Refill(c) is applied — replicated to the log — by awaitRefill's
+	// first poll (hasUnknownPeer: "c" is still listed in Peers but no
+	// longer a live Member), which also re-kicks the parked step: since a
+	// re-kick issues a FRESH AssignWork call to "c" (never a retry of its
+	// still-orphaned original one — see hangFirstCall's doc), "c" responds
+	// this time, driving the job to completion.
+	waitForCondition(t, 5*time.Second, func() bool {
+		for _, c := range node.Log() {
+			if c.Op == cell.OpAddMember && c.Worker == "c" {
+				return true
+			}
+		}
+		return false
+	})
+
+	var got coupledCompletion
+	select {
+	case got = <-reportCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for the completion report after refill")
+	}
+	if got.JobID != "job-refill" {
+		t.Fatalf("reported JobID = %q, want job-refill", got.JobID)
+	}
+	want2 := combineStep(len(followers), steps-1)
+	if !bytes.Equal(got.Combined, want2) {
+		t.Fatalf("reported combined = %x, want %x (all %d members' contribution)", got.Combined, want2, len(followers))
+	}
+
+	// No further stall across the whole run: exactly the one ReportStatus
+	// call from before the refill.
+	mu.Lock()
+	finalCalls := len(statusCalls)
+	mu.Unlock()
+	if finalCalls != 1 {
+		t.Fatalf("ReportStatus calls across the whole run = %d, want 1", finalCalls)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-runErr:
+		requireCleanShutdown(t, "run()", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("run() did not return promptly after ctx cancellation")
 	}
 }

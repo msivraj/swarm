@@ -87,6 +87,8 @@ func toBarrierEvent(ev Event) barrier.Event {
 		return barrier.Event{Kind: barrier.Restored, Ckpt: ev.Ckpt}
 	case EventGiveUp:
 		return barrier.Event{Kind: barrier.GiveUp}
+	case EventRefill:
+		return barrier.Event{Kind: barrier.Refill, Worker: ev.Worker}
 	default:
 		// Not a barrier event kind (e.g. a leader/message-passing event fed
 		// to the wrong driver by mistake): barrier.Step's own default case
@@ -124,6 +126,8 @@ func fromBarrierCommand(c barrier.Command) Command {
 		return Command{Op: OpStall, Have: c.Have, Need: c.Need}
 	case barrier.Fail:
 		return Command{Op: OpFail, BarrierCkpt: c.Ckpt}
+	case barrier.AddMember:
+		return Command{Op: OpAddMember, Worker: c.Worker}
 	default:
 		return Command{Op: -1}
 	}
@@ -131,11 +135,11 @@ func fromBarrierCommand(c barrier.Command) Command {
 
 // applyBarrierCommand folds one already-executed Command into bs, the same
 // state transition barrier.Step's own commit path already applied when the
-// command was first produced — see barrier.go's completeStep/stall/stepLost
-// for the transitions this mirrors. Only OpRelease, OpCheckpoint, OpEvict,
-// OpRollback, and OpFail carry a state transition; OpAllReduce, OpStall
-// (whose Rollback always precedes or accompanies it in the same batch), and
-// unrecognized ops are no-ops here.
+// command was first produced — see barrier.go's completeStep/stall/stepLost/
+// stepRefill for the transitions this mirrors. Only OpRelease, OpCheckpoint,
+// OpEvict, OpRollback, OpFail, and OpAddMember carry a state transition;
+// OpAllReduce, OpStall (whose Rollback always precedes or accompanies it in
+// the same batch), and unrecognized ops are no-ops here.
 func applyBarrierCommand(bs barrier.State, c Command) barrier.State {
 	switch c.Op {
 	case OpRelease:
@@ -154,6 +158,8 @@ func applyBarrierCommand(bs barrier.State, c Command) barrier.State {
 		}
 	case OpFail:
 		bs.Failed = true
+	case OpAddMember:
+		bs.Members = addBarrierWorker(bs.Members, c.Worker)
 	}
 	return bs
 }
@@ -170,4 +176,21 @@ func removeBarrierWorker(members []barrier.WorkerID, w barrier.WorkerID) []barri
 		}
 	}
 	return out
+}
+
+// addBarrierWorker returns members with w appended, copy-on-write, unless w
+// is already present — the same idempotency barrier.go's own (unexported)
+// appendWorker/stepRefill apply to a live Refill fold, mirrored here so
+// replaying an OpAddMember from the log (possibly more than once, e.g. a
+// re-elected leader replaying the same post-checkpoint suffix twice before
+// its own next checkpoint) never duplicates the worker.
+func addBarrierWorker(members []barrier.WorkerID, w barrier.WorkerID) []barrier.WorkerID {
+	for _, m := range members {
+		if m == w {
+			return members
+		}
+	}
+	out := make([]barrier.WorkerID, len(members), len(members)+1)
+	copy(out, members)
+	return append(out, w)
 }

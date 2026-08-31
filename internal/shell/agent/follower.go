@@ -101,11 +101,7 @@ func (a *Agent) awaitCellAssignment(ctx context.Context) (*transport.CellAssignm
 			return nil, err
 		}
 
-		client, err := a.clients.get(ctx)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := client.CellAssignment(ctx, &transport.CellAssignmentRequest{Agent: a.cfg.AgentID})
+		resp, err := a.fetchCellAssignment(ctx)
 		if err == nil && resp.GetHasAssignment() {
 			return resp, nil
 		}
@@ -114,6 +110,29 @@ func (a *Agent) awaitCellAssignment(ctx context.Context) (*transport.CellAssignm
 			return nil, err
 		}
 	}
+}
+
+// fetchCellAssignment makes ONE ControlPlane.CellAssignment RPC attempt for
+// this agent, using the current client connection (a.clients.get) — the
+// single-call primitive both awaitCellAssignment's blocking "wait for the
+// FIRST assignment" loop and pollCellAssignment's refill-poll (issue #122,
+// LeaderHost.PollAssignment) build on.
+func (a *Agent) fetchCellAssignment(ctx context.Context) (*transport.CellAssignmentResponse, error) {
+	client, err := a.clients.get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.CellAssignment(ctx, &transport.CellAssignmentRequest{Agent: a.cfg.AgentID})
+}
+
+// pollCellAssignment is LeaderHost.PollAssignment's production wiring (issue
+// #122, H1-C): a single, non-retrying CellAssignment poll — a parked
+// LeaderHost's own refill-poll loop (awaitRefill, leader.go) already
+// supplies the retry cadence, so this only needs to hand back whatever this
+// one attempt got, including a transient error, which awaitRefill treats
+// exactly like "not refilled yet".
+func (a *Agent) pollCellAssignment(ctx context.Context) (*transport.CellAssignmentResponse, error) {
+	return a.fetchCellAssignment(ctx)
 }
 
 // serveFollower binds Follower.Listen, records the resolved address (see
