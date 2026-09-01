@@ -58,6 +58,14 @@ type JobSpec struct {
 	// the existing trusted native path; Open routes the job through P3's
 	// WASM-sandboxed, quorum-verified path (P0-P2 behavior unchanged).
 	Tier Tier
+	// Tenant is the owning tenant for P5 quota/fairness. "" (the zero
+	// value) is the default/untagged tenant, so P0-P4 jobs — which never
+	// set this — are unaffected.
+	Tenant TenantID
+	// Demand is this job's per-resource request, a normalized share of
+	// cluster capacity (see ResourceVec). Nil (the zero value) means no
+	// declared demand, matching pre-P5 behavior.
+	Demand ResourceVec
 }
 
 // Task is one unit of independent work decomposed from a JobSpec.
