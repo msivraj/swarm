@@ -8,6 +8,7 @@
 package tenancy
 
 import (
+	"math"
 	"sort"
 
 	"github.com/msivraj/swarm/internal/model"
@@ -25,12 +26,18 @@ import (
 // callers keyed by Tenant) — the quota check itself only compares u and q,
 // per the ticket's exact rule.
 //
+// A non-finite consumed share (NaN) fails CLOSED: since NaN > x is false for
+// every x, a plain ">" comparison would let a NaN reading slip through as
+// "within quota". IsNaN is checked explicitly so malformed input is always
+// rejected rather than silently admitted. +Inf already fails closed via the
+// ordinary ">" comparison.
+//
 // The shell is expected to add a prospective job's Demand into u BEFORE
 // calling WithinQuota, so "would admitting this job exceed quota?" is this
 // same pure check.
 func WithinQuota(t model.Tenant, u model.Usage, q model.Quota) bool {
 	for kind, consumed := range u.Consumed {
-		if consumed > q.Limit[kind] {
+		if math.IsNaN(consumed) || consumed > q.Limit[kind] {
 			return false
 		}
 	}
