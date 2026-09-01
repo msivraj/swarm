@@ -39,3 +39,19 @@ tidy:
 # Regenerate gRPC/proto Go from proto/*.proto (requires buf + plugins on PATH).
 proto:
 	@PATH="$$PATH:$$($(GO) env GOPATH)/bin" buf generate
+
+# ---- P4 local FoundationDB harness (#167). NOT part of gate-full / CI. ----
+# The GitHub gate stays hermetic and FDB/CGo-free: default build tags exclude
+# the //go:build fdb adapter. This target exercises that adapter against a live
+# local single-node fdbserver. Requires FoundationDB clients+server + libfdb.
+# See docs/fdb-local.md.
+.PHONY: test-fdb install-hooks
+
+test-fdb:
+	@command -v fdbcli >/dev/null 2>&1 || { echo "fdbcli not found — install FoundationDB clients+server. See docs/fdb-local.md."; exit 1; }
+	@fdbcli --exec "status minimal" 2>/dev/null | grep -qi "database is available" || { echo "local FoundationDB not available — start fdbserver. See docs/fdb-local.md."; exit 1; }
+	$(GO) test -tags fdb ./internal/shell/store/... -run FDB -v
+
+install-hooks:
+	git config core.hooksPath scripts/hooks
+	@echo "git hooks wired (core.hooksPath=scripts/hooks). FDB pre-push enforcement active."

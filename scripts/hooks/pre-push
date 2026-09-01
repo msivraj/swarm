@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# git pre-push: enforce the local FoundationDB smoke/e2e test for pushes that touch
+# the FDB adapter (or its registry serialization), so real-FDB regressions are caught
+# BEFORE push. GitHub CI is hermetic/FDB-free by design; this is where the FDB path is
+# actually exercised. Non-FDB pushes are unaffected. Escape hatch: SWARM_SKIP_FDB=1.
+set -uo pipefail
+[ "${SWARM_SKIP_FDB:-}" = "1" ] && { echo "pre-push: SWARM_SKIP_FDB=1 — skipping FDB smoke test."; exit 0; }
+root=$(git rev-parse --show-toplevel) || exit 0
+cd "$root" || exit 0
+z=0000000000000000000000000000000000000000
+changed=""
+while read -r _lref lsha _rref rsha; do
+  [ "$lsha" = "$z" ] && continue                         # branch deletion
+  if [ "$rsha" = "$z" ]; then
+    base=$(git merge-base "$lsha" origin/main 2>/dev/null || echo "$lsha")
+  else
+    base="$rsha"
+  fi
+  changed="$changed"$'\n'$(git diff --name-only "$base" "$lsha" 2>/dev/null)
+done
+# FDB-relevant paths whose changes must be smoke-tested.
+if ! printf '%s\n' "$changed" | grep -qE 'internal/shell/store/fdb|internal/core/registry/serialize'; then
+  exit 0   # nothing FDB-relevant in this push — nothing to enforce.
+fi
+echo "pre-push: FDB-relevant changes detected — running the local FDB smoke test (make test-fdb)."
+if ! command -v fdbcli >/dev/null 2>&1 || ! fdbcli --exec "status minimal" 2>/dev/null | grep -qi "database is available"; then
+  echo "ERROR: this push changes FDB code but a local FoundationDB is not available." >&2
+  echo "       Install/start it (see docs/fdb-local.md), or set SWARM_SKIP_FDB=1 to bypass." >&2
+  exit 1
+fi
+exec make test-fdb
