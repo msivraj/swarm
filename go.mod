@@ -16,6 +16,7 @@ require (
 )
 
 require (
+	github.com/apple/foundationdb/bindings/go v0.0.0-20260715201227-0074653ee011 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
