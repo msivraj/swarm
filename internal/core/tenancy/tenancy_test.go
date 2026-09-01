@@ -1,6 +1,7 @@
 package tenancy
 
 import (
+	"math"
 	"testing"
 
 	"github.com/msivraj/swarm/internal/model"
@@ -119,6 +120,27 @@ func TestOverQuotaRejected(t *testing.T) {
 	atLimit := model.Usage{Consumed: model.ResourceVec{"cpu": 0.4, "mem": 0.4, "gpu": 0.4}}
 	if !WithinQuota(tenant, atLimit, q) {
 		t.Fatalf("WithinQuota(_, %+v, %+v) = false, want true (at limit is within quota)", atLimit, q)
+	}
+}
+
+// TestWithinQuota_NonFiniteFailsClosed is the security-review regression
+// test (issue #206): a non-finite consumed share must never read as "within
+// quota". NaN > limit is false for every limit, so a plain ">" comparison
+// would fail OPEN; WithinQuota must reject it explicitly instead. +Inf is
+// included for completeness — it already fails closed via ">", but this
+// confirms both non-finite directions are rejected.
+func TestWithinQuota_NonFiniteFailsClosed(t *testing.T) {
+	tenant := model.Tenant{ID: "a"}
+	q := model.Quota{Limit: model.ResourceVec{"cpu": 0.5}}
+
+	nan := model.Usage{Consumed: model.ResourceVec{"cpu": math.NaN()}}
+	if WithinQuota(tenant, nan, q) {
+		t.Fatalf("WithinQuota(_, %+v, %+v) = true, want false (NaN share must fail closed)", nan, q)
+	}
+
+	inf := model.Usage{Consumed: model.ResourceVec{"cpu": math.Inf(1)}}
+	if WithinQuota(tenant, inf, q) {
+		t.Fatalf("WithinQuota(_, %+v, %+v) = true, want false (+Inf share must fail closed)", inf, q)
 	}
 }
 
