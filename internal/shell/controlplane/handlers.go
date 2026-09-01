@@ -22,6 +22,12 @@ import (
 // by draining that buffer once, so a task another goroutine's JoinAgent had
 // already made room for gets picked up immediately too.
 func (s *Server) SubmitJob(_ context.Context, req *transport.SubmitJobRequest) (*transport.SubmitJobResponse, error) {
+	done, err := s.admitIngress(requestPriority(req.GetParams()))
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+
 	s.mu.Lock()
 	jobID := s.newJobIDLocked()
 	s.mu.Unlock()
@@ -58,7 +64,7 @@ func (s *Server) SubmitJob(_ context.Context, req *transport.SubmitJobRequest) (
 	}
 	s.taskTotal[jobID] = len(tasks)
 	s.pending = append(s.pending, tasks...)
-	err := s.drainPendingLocked()
+	err = s.drainPendingLocked()
 	s.mu.Unlock()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "place tasks: %v", err)
@@ -73,6 +79,12 @@ func (s *Server) SubmitJob(_ context.Context, req *transport.SubmitJobRequest) (
 // gossip, no SWIM — the control plane is the sole authority on who is in
 // which cell.
 func (s *Server) JoinAgent(_ context.Context, req *transport.JoinAgentRequest) (*transport.JoinAgentResponse, error) {
+	done, err := s.admitIngress(s.cfg.JoinPriority)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+
 	agent := req.GetAgent()
 
 	s.mu.Lock()
@@ -219,6 +231,12 @@ func (s *Server) ReportCellStatus(_ context.Context, req *transport.CellStatusRe
 // the cell of (never joined, or reaped) gets HasTask:false, the same
 // response as an empty queue.
 func (s *Server) PullTask(_ context.Context, req *transport.PullTaskRequest) (*transport.PullTaskResponse, error) {
+	// PullTask only ever throttles under load, never sheds (fork (b) of
+	// #157): a stalled runner loop can only make load worse, never better,
+	// so it is slowed instead of hard-rejected. See admitThrottleOnly's doc.
+	done := s.admitThrottleOnly(0)
+	defer done()
+
 	s.mu.Lock()
 	cell, ok := s.agentCell[req.GetAgent()]
 	s.mu.Unlock()
@@ -256,6 +274,14 @@ func (s *Server) PullTask(_ context.Context, req *transport.PullTaskRequest) (*t
 // the raw, possibly-inflated result count — otherwise a duplicate report
 // could push the count to total before every distinct task has reported,
 // aggregating on incomplete data.
+//
+// ReportResult is deliberately NEVER gated by backpressure (fork (b) of
+// #157, the same design decision as PullTask's throttle-only carve-out,
+// taken further here): completed work is precious, and dropping a result
+// loses finished compute a worker already spent real time producing, so
+// this handler carries no admitIngress/admitThrottleOnly call at all —
+// unlike SubmitJob/JoinAgent/PullTask, high control-plane load never makes
+// this RPC wait or fail.
 func (s *Server) ReportResult(_ context.Context, req *transport.ReportResultRequest) (*transport.ReportResultResponse, error) {
 	taskID := model.TaskID(req.GetTaskId())
 

@@ -84,6 +84,31 @@ type Config struct {
 	// a sink so they can assert on the exact line rather than scraping
 	// stdout.
 	Logger func(format string, args ...interface{})
+
+	// Limits configures backpressure.AdmitUnderLoad's admission thresholds
+	// (Capacity, ShedThreshold) — see internal/core/backpressure and
+	// docs/phases/swarm-p4-components.txt §02. The zero value (Capacity 0)
+	// makes AdmitUnderLoad shed every request unconditionally (its own
+	// documented conservative default for an unconfigured control plane),
+	// so a deployment that wants the admission middleware to do anything
+	// other than reject everything must set a real Capacity — DefaultConfig
+	// does.
+	Limits model.Limits
+
+	// JoinPriority is the model.Req.Priority every JoinAgent request maps
+	// to for the backpressure admission check. JoinAgentRequest carries no
+	// native Priority field on the wire (unlike SubmitJobRequest, which
+	// carries one via Params — see requestPriority's doc), so this
+	// per-deployment default is JoinAgent's only priority signal. The zero
+	// value (0) is the lowest priority, matching model.Req's own
+	// zero-value convention.
+	JoinPriority int
+
+	// Sleep waits out a backpressure.Throttle decision's delay. Defaults to
+	// a real time.Sleep; tests inject a fake that returns immediately (and
+	// records the requested duration), so a delayed RPC resolves
+	// deterministically with no real wall-clock wait.
+	Sleep func(model.Duration)
 }
 
 // DefaultConfig returns the P0 defaults: an 8-slot starting cell, a 30s
@@ -91,6 +116,12 @@ type Config struct {
 // 4-agent cells with a 30s resize cooldown, and a 5s regional-summary publish
 // cadence (meaningless until Config.GlobalRouter is set). cmd/swarmd's
 // control-plane mode uses these unless overridden.
+//
+// Limits.Capacity (1000) is sized generously above any realistic
+// concurrent-RPC count a single control-plane process serves in P0/P1/P4's
+// tests and typical deployments, at a P4 doc-example 95% shed threshold — so
+// the backpressure middleware stays transparent (see admitIngress's doc)
+// until load genuinely spikes, never regressing existing P0-P3 behavior.
 func DefaultConfig() Config {
 	return Config{
 		DefaultCellCapacity: 8,
@@ -102,5 +133,6 @@ func DefaultConfig() Config {
 			CooldownNS: int64(30 * time.Second),
 		},
 		SummaryInterval: 5 * time.Second,
+		Limits:          model.Limits{Capacity: 1000, ShedThreshold: 0.95},
 	}
 }

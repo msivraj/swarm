@@ -74,6 +74,14 @@ type Server struct {
 
 	agentAddrs      map[string]agentAddr                         // agent -> its advertised raft_addr/cell_leader_addr (#101 JoinAgent fields), learned at JoinAgent
 	cellAssignments map[string]*transport.CellAssignmentResponse // agent -> its coupled-cell CellAssignment (#101), once activateCoupledCellLocked has built one for it
+
+	// loadMu guards load, kept separate from mu: an ingress admission check
+	// (admitIngress/admitThrottleOnly) must be able to read/update the load
+	// snapshot without contending on — or, worse, holding through a
+	// Throttle delay — the same mutex the registry/placement bookkeeping
+	// above serializes on.
+	loadMu sync.Mutex
+	load   model.LoadState // live in-flight + queued snapshot; see beginRPC/waitQueued
 }
 
 // New returns a Server ready to Serve. now supplies the clock (and the
@@ -96,6 +104,9 @@ func New(st store.Store, cfg Config, now func() model.Instant) *Server {
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = log.Printf
+	}
+	if cfg.Sleep == nil {
+		cfg.Sleep = realSleep
 	}
 	s := &Server{
 		store:         st,
