@@ -147,6 +147,16 @@ type FleetState struct {
 	// Cordoned is the set of cells already cordoned/draining; nextDrain
 	// skips these when choosing the next cell.
 	Cordoned map[CellID]bool
+	// Cells maps each cell to the region it lives in — the topology
+	// recoveryPlan (P5) needs to re-home agents out of a lost region.
+	Cells map[CellID]RegionID
+	// Regions lists the fleet's regions in deterministic order, so
+	// recoveryPlan can pick the surviving region deterministically (the
+	// lowest-sorted healthy RegionID).
+	Regions []RegionID
+	// Backups is the last registry backup Instant per region, so
+	// recoveryPlan can pick the latest backup to restore from.
+	Backups map[RegionID]Instant
 }
 
 // UpgradePlan is the target of the rolling upgrade.
