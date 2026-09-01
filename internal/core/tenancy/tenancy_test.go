@@ -271,10 +271,10 @@ func TestFairAlternates(t *testing.T) {
 // consumption by Tenant.Weight, per NextFair's doc comment) shifts the pick.
 func TestDominantShare(t *testing.T) {
 	// cpu-heavy tenant's dominant resource is cpu (0.6); mem-heavy tenant's
-	// dominant resource is mem (0.5). cpu-heavy's dominant share (0.6) is
-	// larger, so mem-heavy is picked, even though summing raw usage
-	// (0.6+0.05=0.65 vs 0.1+0.5=0.6) would pick the other way if this were
-	// sum-based instead of max-based.
+	// dominant resource is mem (0.5). The pick is driven by each tenant's
+	// DOMINANT (max) share: cpu-heavy's dominant share (0.6) is the larger
+	// of the two, so mem-heavy — whose dominant share (0.5) is the LOWER
+	// one — is picked.
 	pending := []model.JobSpec{
 		job("cpu-job", "cpu-heavy"),
 		job("mem-job", "mem-heavy"),
@@ -285,6 +285,24 @@ func TestDominantShare(t *testing.T) {
 	}
 	if got, want := NextFair(pending, rawUsage), model.JobID("mem-job"); got != want {
 		t.Fatalf("NextFair (unweighted) = %v, want %v (dominant share must be max, not sum)", got, want)
+	}
+
+	// Discriminating case: max-ordering and sum-ordering DISAGREE here, so
+	// only a genuine max-based DRF passes. Tenant x: {cpu:0.5, mem:0.5} ->
+	// max 0.5, sum 1.0. Tenant y: {cpu:0.7, mem:0.0} -> max 0.7, sum 0.7.
+	// True DRF (lowest MAX) picks x (0.5 < 0.7); a raw-sum impl would pick y
+	// instead (0.7 < 1.0). This case fails if NextFair's dominant-share
+	// reduction is ever swapped for a sum.
+	pendingXY := []model.JobSpec{
+		job("x-job", "x"),
+		job("y-job", "y"),
+	}
+	usageXY := map[model.TenantID]model.Usage{
+		"x": usage("cpu", 0.5, "mem", 0.5),
+		"y": usage("cpu", 0.7, "mem", 0.0),
+	}
+	if got, want := NextFair(pendingXY, usageXY), model.JobID("x-job"); got != want {
+		t.Fatalf("NextFair (max-vs-sum discriminator) = %v, want %v (must pick by lowest MAX component, not lowest sum)", got, want)
 	}
 
 	// Weighting: give cpu-heavy a much larger Tenant.Weight. Per NextFair's
