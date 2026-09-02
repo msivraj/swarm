@@ -57,8 +57,8 @@ func (s *Server) reapOnce() {
 }
 
 // mitosisLoop drives the mitosis core on a timer: read the registry
-// snapshot + clock, call mitosis.Decide, execute the returned Split/Merge
-// commands.
+// snapshot + clock, call mitosis.DecideSignal, execute the returned Split/
+// Merge commands.
 func (s *Server) mitosisLoop() {
 	defer s.wg.Done()
 	ticker := time.NewTicker(s.cfg.MitosisInterval)
@@ -73,7 +73,7 @@ func (s *Server) mitosisLoop() {
 	}
 }
 
-// mitosisOnce reads a registry snapshot, calls mitosis.Decide, executes
+// mitosisOnce reads a registry snapshot, calls mitosis.DecideSignal, executes
 // every returned command, and then drains the ingress pending buffer: a
 // split or merge can change which cells exist and how much free capacity
 // each has, so a task placement.Place could not previously assign may now
@@ -81,17 +81,29 @@ func (s *Server) mitosisLoop() {
 // retries pending tasks even when no JoinAgent/SubmitJob call happens to
 // trigger a drain — driven by the same injected clock/ticker as the rest of
 // this loop, so it stays deterministic and I/O-free beyond the store call.
+//
+// #222 rewires this from mitosis.Decide to mitosis.DecideSignal: the
+// signals fed in (buildCellSignals) carry each cell's Size (the P0 count
+// proxy, unchanged) plus its measured P99/Tput from cfg.CellSignals, when
+// one is wired. A cell cfg.CellSignals has no measurement for (or a nil
+// cfg.CellSignals, e.g. DefaultConfig) gets P99==0, and DecideSignal falls
+// back to exactly the count decision Decide made — so this rewiring is
+// byte-identical to the old loop until a caller actually wires a signal
+// source, the subsumption guarantee end to end.
 func (s *Server) mitosisOnce() {
 	s.mu.Lock()
 	snapshot := registry.Snapshot(s.store.Registry())
+	couplings := s.cellCouplingsLocked()
 	cooldowns := make(map[model.CellID]model.Instant, len(s.cooldowns))
 	for id, at := range s.cooldowns {
 		cooldowns[id] = at
 	}
+	src := s.cfg.CellSignals
 	s.mu.Unlock()
 
 	now := s.now()
-	for _, cmd := range mitosis.Decide(snapshot, s.cfg.MitosisThresholds, cooldowns, now) {
+	signals := buildCellSignals(snapshot, couplings, src)
+	for _, cmd := range mitosis.DecideSignal(signals, s.cfg.signalThresholds(), cooldowns, now) {
 		switch cmd.Op {
 		case mitosis.Split:
 			s.executeSplit(cmd.Cell, now)
@@ -112,6 +124,48 @@ func (s *Server) mitosisOnce() {
 	// drainPendingLocked's own rationale just above.
 	s.retryPendingGangsLocked()
 	s.mu.Unlock()
+}
+
+// cellCouplingsLocked returns the model.Coupling each currently
+// gang-reserved cell is governed by, derived from s.gangJobs — the control
+// plane's own record of which job's coupling contract a cell's membership
+// must respect while that gang's reservation is live (see gang.go's
+// gangReservation). A cell that holds no live gang reservation is absent
+// from the returned map; buildCellSignals treats that as model.Independent
+// (the zero value) — the loosest, most permissive signalThreshold band,
+// which is exactly right for a plain Independent-job cell that coordinates
+// nothing and so has no coupling to protect. Callers must hold s.mu.
+func (s *Server) cellCouplingsLocked() map[model.CellID]model.Coupling {
+	couplings := make(map[model.CellID]model.Coupling, len(s.gangJobs))
+	for _, r := range s.gangJobs {
+		for _, a := range r.assignments {
+			couplings[a.Cell] = r.job.Coupling
+		}
+	}
+	return couplings
+}
+
+// buildCellSignals converts a registry snapshot into the []model.CellSignal
+// mitosis.DecideSignal reasons over: Cell/Size come straight from snapshot,
+// Coupling from couplings (model.Independent when a cell is absent from it),
+// and P99/Tput from src's per-cell measured reading when one exists. src ==
+// nil (Config.CellSignals unset, e.g. DefaultConfig) or a cell src has no
+// measurement for both leave that CellSignal's P99 at its zero value, so
+// DecideSignal falls back to exactly the count-based decision for it — the
+// subsumption guarantee buildCellSignals exists to preserve.
+func buildCellSignals(snapshot []model.CellView, couplings map[model.CellID]model.Coupling, src CellSignalSource) []model.CellSignal {
+	signals := make([]model.CellSignal, len(snapshot))
+	for i, c := range snapshot {
+		sig := model.CellSignal{Cell: c.ID, Coupling: couplings[c.ID], Size: c.Size}
+		if src != nil {
+			if p99, tput, ok := src.CellSignal(c.ID); ok {
+				sig.P99 = p99
+				sig.Tput = tput
+			}
+		}
+		signals[i] = sig
+	}
+	return signals
 }
 
 // executeSplit carries out a mitosis.Split command: it forms two new cells,

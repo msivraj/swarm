@@ -26,12 +26,40 @@ type Config struct {
 	HeartbeatSweep time.Duration
 
 	// MitosisInterval is how often the mitosis loop reads the registry
-	// snapshot and calls mitosis.Decide.
+	// snapshot and calls mitosis.DecideSignal.
 	MitosisInterval time.Duration
 
-	// MitosisThresholds configures mitosis.Decide's split/merge band and
-	// cooldown window (see internal/core/mitosis).
+	// MitosisThresholds carries the count-based split/merge band and
+	// cooldown window (Target/CooldownNS) that fed mitosis.Decide directly
+	// in P0. mitosisOnce now calls mitosis.DecideSignal instead, but it
+	// still reads Target/CooldownNS straight off this field (composed with
+	// SLO into a model.SignalThresholds by signalThresholds()) — so every
+	// existing deployment/test that only ever set MitosisThresholds keeps
+	// getting exactly the same count-based band, and an unmeasured cell
+	// falls back to it exactly as Decide decided (P6's subsumption
+	// guarantee) — this field's own name/type/zero-value stay untouched
+	// (see #222).
 	MitosisThresholds mitosis.Thresholds
+
+	// SLO is the P6 latency objective mitosis.DecideSignal judges a cell's
+	// MEASURED p99 against (via the mitosis core's per-coupling
+	// signalThreshold). The zero value (AtRisk 0) is clamped by
+	// signalThreshold to its own minimum tightening fraction, so an unset
+	// SLO still yields a usable (if maximally tight) band rather than a
+	// degenerate one — DefaultConfig sets a real one.
+	SLO model.SLO
+
+	// CellSignals is the seam mitosisOnce reads each cell's MEASURED p99/
+	// throughput signal from — P4's observability rollups, at per-cell
+	// granularity (see CellSignalSource's doc for why this is not simply a
+	// read through observability.Reporter's own Region()/Global(), which
+	// are already folded across many cells). nil, the zero value, means no
+	// measured signal is available anywhere: mitosisOnce builds every
+	// model.CellSignal with P99==0, so mitosis.DecideSignal falls back to
+	// exactly the P0 count-based decision for every cell — the subsumption
+	// guarantee, end to end, and exactly why a deployment that never wires
+	// observability behaves identically to the prior count-based loop.
+	CellSignals CellSignalSource
 
 	// RegionID stamps this region's identity on every RegionalSummary it
 	// publishes and PartialAggregate it reports upward (issue #44, S2).
@@ -122,6 +150,13 @@ type Config struct {
 // tests and typical deployments, at a P4 doc-example 95% shed threshold — so
 // the backpressure middleware stays transparent (see admitIngress's doc)
 // until load genuinely spikes, never regressing existing P0-P3 behavior.
+//
+// SLO's Objective/AtRisk (0.999/0.5) is a plausible mid-tightening default —
+// half the coupling's base latency band remains before a measured p99 is
+// judged AtRisk — matching the mitosis core's own doc-example usage
+// (mitosis_test.go). CellSignals is left nil: DefaultConfig's mitosis loop
+// starts in the pure count-based fallback until a caller wires a real
+// per-cell signal source.
 func DefaultConfig() Config {
 	return Config{
 		DefaultCellCapacity: 8,
@@ -132,7 +167,44 @@ func DefaultConfig() Config {
 			Target:     4,
 			CooldownNS: int64(30 * time.Second),
 		},
+		SLO:             model.SLO{Objective: 0.999, AtRisk: 0.5},
 		SummaryInterval: 5 * time.Second,
 		Limits:          model.Limits{Capacity: 1000, ShedThreshold: 0.95},
 	}
+}
+
+// signalThresholds composes the model.SignalThresholds mitosis.DecideSignal
+// reasons over from cfg.MitosisThresholds (Target/CooldownNS — the P0 count
+// band and cooldown window, read verbatim) plus cfg.SLO (the P6 latency
+// objective). This is the "wraps" side of #222: every existing caller that
+// only ever set MitosisThresholds still gets exactly the same Target/
+// CooldownNS band, now additionally judged against SLO's derived latency
+// threshold whenever a cell has a measured P99.
+func (cfg Config) signalThresholds() model.SignalThresholds {
+	return model.SignalThresholds{
+		Target:     cfg.MitosisThresholds.Target,
+		CooldownNS: cfg.MitosisThresholds.CooldownNS,
+		SLO:        cfg.SLO,
+	}
+}
+
+// CellSignalSource is the seam mitosisOnce reads a cell's MEASURED p99/
+// throughput signal from. It is deliberately per-cell rather than a wrapper
+// over observability.Reporter's own Region()/Global() reads: a Reporter's
+// stored series are already folded across every cell in a region (that
+// folding is the whole point of P4's O1 cardinality bound, §03) — reading
+// back through it would blend away exactly the one hot cell mitosis needs to
+// single out. A real implementation sits alongside the shell that feeds
+// observability.Reporter.Collect and keeps the per-cell CellMetrics that
+// call was given (or a windowed p99 derived from them); tests supply a fake.
+//
+// A nil CellSignalSource (Config.CellSignals' zero value) means no measured
+// signal exists anywhere: mitosisOnce leaves every cell's P99 at 0, and
+// mitosis.DecideSignal falls back to exactly the count-based decision — see
+// Config.CellSignals' doc.
+type CellSignalSource interface {
+	// CellSignal returns cell's last measured p99 latency and throughput,
+	// and whether a measurement exists for it at all. ok == false leaves
+	// that cell's model.CellSignal.P99 at its zero value in mitosisOnce.
+	CellSignal(cell model.CellID) (p99 model.Duration, tput float64, ok bool)
 }
