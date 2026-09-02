@@ -353,3 +353,229 @@ func TestVerify_NilReputationSkipsSizingAndRecording(t *testing.T) {
 		t.Fatalf("Verify Kind = %v, want Agreed", v.Kind)
 	}
 }
+
+// -----------------------------------------------------------------------
+// #211 — eligiblePool drops frozen (reputation.Eligible == false) machines,
+// in addition to blacklisted ones, while leaving fresh identities eligible.
+// -----------------------------------------------------------------------
+
+// frozenReputation is the reputation of a chronic quorum-loser: it has
+// participated enough to be judged (Observations >= the core's
+// minObservations, 4) yet earned ~nothing (Score at freezeFloor, 0) — see
+// internal/core/reputation.Eligible (#209). Such an identity is frozen.
+func frozenReputation() model.Reputation {
+	return model.Reputation{Observations: 4, Score: 0}
+}
+
+// freshReputation is a low-participation identity that the core's zero-start
+// rule (#209/#03) always keeps eligible, even though its Score already sits
+// at the same floor a chronic liar's does — the two are indistinguishable by
+// Score alone, but Observations tells them apart.
+func freshReputation() model.Reputation {
+	return model.Reputation{Observations: 1, Score: 0}
+}
+
+// TestVerify_FrozenLoserExcluded: a chronic-loser identity seeded below the
+// freeze floor never appears in any assigned K-set, across multiple retry
+// attempts with distinct seeds.
+func TestVerify_FrozenLoserExcluded(t *testing.T) {
+	pool := []model.MachineID{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9"}
+
+	disp := NewFakeDispatcher()
+	// m1 is frozen and deliberately left unconfigured: if the coordinator
+	// ever dispatched to it, Dispatch would return an error for lack of a
+	// configured behavior.
+	for i, m := range pool[1:] {
+		// Every non-frozen machine claims a mutually distinct value, so any
+		// K-set drawn from the eligible pool is Disputed and Verify retries
+		// with a fresh seed — giving the freeze exclusion multiple rounds to
+		// (fail to) leak m1 into a K-set.
+		disp.Honest(m, []byte{byte('a' + i)})
+	}
+
+	const requester = model.SpiffeID("req-1")
+	repStore := reputation.NewMemStore()
+	repStore.Put(requester, model.Reputation{Score: 1000}) // K floors to openMinK == 3.
+	repStore.Put(identityOf("m1"), frozenReputation())
+
+	c := New(Config{
+		Dispatcher:  disp,
+		Reputation:  repStore,
+		Clock:       NewFakeClock(0),
+		Timeout:     1000,
+		MaxAttempts: 3,
+	})
+
+	task := model.Task{ID: "t1"}
+	_, err := c.Verify(context.Background(), task, model.Open, requester, pool, 1)
+	if err != ErrNoQuorum {
+		t.Fatalf("Verify err = %v, want ErrNoQuorum (every round Disputed by construction)", err)
+	}
+
+	for _, m := range disp.Calls() {
+		if m == "m1" {
+			t.Fatalf("dispatcher was called for frozen machine m1 across %d attempts: calls=%v", 3, disp.Calls())
+		}
+	}
+	if len(disp.Calls()) == 0 {
+		t.Fatalf("dispatcher saw no calls at all — test setup did not exercise any round")
+	}
+}
+
+// TestVerify_FreshIdentityIncluded: a never-seen / low-Observations identity
+// (zero-value-like Reputation) is NOT excluded by the freeze filter and
+// remains assignable — the zero-start property must survive this filter.
+func TestVerify_FreshIdentityIncluded(t *testing.T) {
+	pool := []model.MachineID{"m1", "m2", "m3"}
+	honestValue := []byte("the-true-answer")
+
+	disp := NewFakeDispatcher()
+	disp.Honest("m1", honestValue)
+	disp.Honest("m2", honestValue)
+	disp.Honest("m3", honestValue)
+
+	repStore := reputation.NewMemStore()
+	// m1 has never been seen (no entry at all — Get returns the zero value).
+	// m2 has answered a couple of times but hasn't hit minObservations yet,
+	// and already sits at Score 0 — the same Score a chronic liar clamps to.
+	// Neither may be frozen: only Observations, not Score alone, decides.
+	repStore.Put(identityOf("m2"), freshReputation())
+	// m3 seeded with a nonzero Score, well under minObservations.
+	repStore.Put(identityOf("m3"), model.Reputation{Observations: 2, Score: 10})
+
+	const requester = model.SpiffeID("req-1")
+
+	c := New(Config{
+		Dispatcher:  disp,
+		Reputation:  repStore,
+		Clock:       NewFakeClock(0),
+		Timeout:     1000,
+		MaxAttempts: 1,
+	})
+
+	task := model.Task{ID: "t1"}
+	v, err := c.Verify(context.Background(), task, model.Open, requester, pool, 1)
+	if err != nil {
+		t.Fatalf("Verify returned error %v, want nil", err)
+	}
+	if v.Kind != model.Agreed {
+		t.Fatalf("Verify Kind = %v, want Agreed", v.Kind)
+	}
+
+	calls := idSet(disp.Calls())
+	want := idSet(pool)
+	if !setsEqual(calls, want) {
+		t.Fatalf("dispatcher calls = %v, want all of %v — a fresh/never-seen identity was wrongly frozen out", calls, want)
+	}
+}
+
+// TestVerify_BlacklistAndFreezeBothDrop: an identity that is blacklisted and
+// a distinct identity that is frozen are both excluded from the same pool;
+// the remaining eligible machines are still assigned.
+func TestVerify_BlacklistAndFreezeBothDrop(t *testing.T) {
+	pool := []model.MachineID{"m1", "m2", "m3", "m4", "m5"}
+	honestValue := []byte("the-true-answer")
+
+	disp := NewFakeDispatcher()
+	// m1 (blacklisted) and m2 (frozen) are deliberately left unconfigured.
+	disp.Honest("m3", honestValue)
+	disp.Honest("m4", honestValue)
+	disp.Honest("m5", honestValue)
+
+	blacklist := enrollment.NewFakeBlacklist(identityOf("m1"))
+
+	repStore := reputation.NewMemStore()
+	repStore.Put(identityOf("m2"), frozenReputation())
+
+	const requester = model.SpiffeID("req-1")
+
+	c := New(Config{
+		Dispatcher:  disp,
+		Reputation:  repStore,
+		Blacklist:   blacklist,
+		Clock:       NewFakeClock(0),
+		Timeout:     1000,
+		MaxAttempts: 1,
+	})
+
+	task := model.Task{ID: "t1"}
+	v, err := c.Verify(context.Background(), task, model.Open, requester, pool, 1)
+	if err != nil {
+		t.Fatalf("Verify returned error %v, want nil", err)
+	}
+	if v.Kind != model.Agreed {
+		t.Fatalf("Verify Kind = %v, want Agreed", v.Kind)
+	}
+
+	for _, m := range disp.Calls() {
+		if m == "m1" || m == "m2" {
+			t.Fatalf("dispatcher was called for excluded machine %s: calls=%v", m, disp.Calls())
+		}
+	}
+	gotCalls := idSet(disp.Calls())
+	want := idSet([]model.MachineID{"m3", "m4", "m5"})
+	if !setsEqual(gotCalls, want) {
+		t.Fatalf("dispatcher calls = %v, want exactly %v (the pool minus the blacklisted and frozen machines)", gotCalls, want)
+	}
+}
+
+// TestVerify_AllFrozenEmptyPool: a pool whose every member is frozen yields
+// ErrEmptyPool, with no dispatch at all — mirroring the all-blacklisted case.
+func TestVerify_AllFrozenEmptyPool(t *testing.T) {
+	pool := []model.MachineID{"m1", "m2"}
+	disp := NewFakeDispatcher()
+
+	repStore := reputation.NewMemStore()
+	repStore.Put(identityOf("m1"), frozenReputation())
+	repStore.Put(identityOf("m2"), frozenReputation())
+
+	c := New(Config{
+		Dispatcher: disp,
+		Reputation: repStore,
+		Clock:      NewFakeClock(0),
+		Timeout:    1000,
+	})
+
+	_, err := c.Verify(context.Background(), model.Task{ID: "t1"}, model.Open, "req-1", pool, 1)
+	if err != ErrEmptyPool {
+		t.Fatalf("Verify err = %v, want ErrEmptyPool", err)
+	}
+	if calls := disp.Calls(); len(calls) != 0 {
+		t.Fatalf("dispatcher was called (%v) with an entirely frozen pool", calls)
+	}
+}
+
+// TestVerify_NilReputationNoFreeze: with Config.Reputation == nil, no
+// machine is frozen out — behavior is identical to pre-#211: the freeze
+// filter has nowhere to read from, so it excludes nothing.
+func TestVerify_NilReputationNoFreeze(t *testing.T) {
+	pool := []model.MachineID{"m1", "m2", "m3"}
+	honestValue := []byte("the-true-answer")
+
+	disp := NewFakeDispatcher()
+	disp.Honest("m1", honestValue)
+	disp.Honest("m2", honestValue)
+	disp.Honest("m3", honestValue)
+
+	c := New(Config{
+		Dispatcher:  disp,
+		Clock:       NewFakeClock(0),
+		Timeout:     1000,
+		MaxAttempts: 1,
+	})
+
+	task := model.Task{ID: "t1"}
+	v, err := c.Verify(context.Background(), task, model.Open, "req-1", pool, 1)
+	if err != nil {
+		t.Fatalf("Verify returned error %v, want nil", err)
+	}
+	if v.Kind != model.Agreed {
+		t.Fatalf("Verify Kind = %v, want Agreed", v.Kind)
+	}
+
+	calls := idSet(disp.Calls())
+	want := idSet(pool)
+	if !setsEqual(calls, want) {
+		t.Fatalf("dispatcher calls = %v, want all of %v (nil Config.Reputation freezes nothing)", calls, want)
+	}
+}
