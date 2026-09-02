@@ -134,15 +134,48 @@ func (s *Server) mitosisOnce() {
 // from the returned map; buildCellSignals treats that as model.Independent
 // (the zero value) — the loosest, most permissive signalThreshold band,
 // which is exactly right for a plain Independent-job cell that coordinates
-// nothing and so has no coupling to protect. Callers must hold s.mu.
+// nothing and so has no coupling to protect.
+//
+// A cell can be co-reserved by more than one gang (e.g. mid-transition, or
+// distinct gangs sharing a cell's spare capacity), and those gangs' couplings
+// can differ. s.gangJobs is a Go map, so ranging it directly and overwriting
+// couplings[cell] each time (as this used to) is last-writer-wins in
+// map-iteration order — nondeterministic. Instead, every reservation touching
+// a cell is folded through couplingRank and the tightest (lowest-rank) one
+// wins, a total order independent of iteration order: a cell running ANY
+// coupled job gets the strictest signalThreshold band (splits sooner —
+// conservative), the same result on every call. Callers must hold s.mu.
 func (s *Server) cellCouplingsLocked() map[model.CellID]model.Coupling {
 	couplings := make(map[model.CellID]model.Coupling, len(s.gangJobs))
 	for _, r := range s.gangJobs {
 		for _, a := range r.assignments {
-			couplings[a.Cell] = r.job.Coupling
+			existing, ok := couplings[a.Cell]
+			if !ok || couplingRank(r.job.Coupling) < couplingRank(existing) {
+				couplings[a.Cell] = r.job.Coupling
+			}
 		}
 	}
 	return couplings
+}
+
+// couplingRank orders model.Coupling tightest to loosest — Barrier < Leader <
+// MessagePassing < Independent — matching mitosis.signalThreshold's base
+// latency band ordering (see baseSplitP99). It exists because that tightness
+// order does not match the model.Coupling enum's own declaration order
+// (Independent is the zero value), so cellCouplingsLocked cannot just compare
+// model.Coupling values directly when picking the strictest of several
+// reservations on one cell.
+func couplingRank(c model.Coupling) int {
+	switch c {
+	case model.Barrier:
+		return 0
+	case model.Leader:
+		return 1
+	case model.MessagePassing:
+		return 2
+	default: // model.Independent, and any future/unknown coupling
+		return 3
+	}
 }
 
 // buildCellSignals converts a registry snapshot into the []model.CellSignal
