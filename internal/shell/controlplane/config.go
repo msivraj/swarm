@@ -61,6 +61,21 @@ type Config struct {
 	// observability behaves identically to the prior count-based loop.
 	CellSignals CellSignalSource
 
+	// Locality is the seam the P6 locality-preferred placement layer
+	// (Server.placeLocked, see locality.go) reads to build a
+	// model.LocalityGraph before trying placement.BestFit. nil, the zero
+	// value, disables the layer entirely: placeLocked skips BestFit and
+	// calls placement.Place unmodified, exactly as P0-P5 did — so a
+	// deployment that never wires a LocalitySource is byte-for-byte
+	// unaffected by #223 (owner fork c, additive/opt-in). A real deployment
+	// supplies one backed by whatever declares a cell's rack/AZ/region (e.g.
+	// JoinAgent's advertised address resolved against a static topology
+	// map, or a cloud provider's instance-metadata API) and a task's/job's
+	// declared locality (e.g. an origin region carried in JobSpec.Params,
+	// or the submitting client's own resolved topology); tests inject a
+	// fake.
+	Locality LocalitySource
+
 	// RegionID stamps this region's identity on every RegionalSummary it
 	// publishes and PartialAggregate it reports upward (issue #44, S2).
 	RegionID model.RegionID

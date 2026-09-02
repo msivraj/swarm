@@ -206,6 +206,13 @@ func (s *Server) applyRegistryEventLocked(ev registry.RegistryEvent) []registry.
 // against the cached peer view, and only lands back in s.pending when no
 // peer qualifies either (or spill is disabled/inapplicable), preserving S1's
 // "hold, never lose" behavior for that case.
+//
+// Each task's placement call itself goes through s.placeLocked (#223,
+// locality.go), an additive layer that tries placement.BestFit against
+// cfg.Locality's locality graph before falling back to placement.Place —
+// placement.Place is called unmodified either way, so a deployment that
+// never sets cfg.Locality sees exactly the placement.Place scan this
+// function called directly before #223.
 func (s *Server) drainPendingLocked() error {
 	if len(s.pending) == 0 {
 		return nil
@@ -214,7 +221,7 @@ func (s *Server) drainPendingLocked() error {
 
 	remaining := make([]model.Task, 0, len(s.pending))
 	for _, t := range s.pending {
-		p := placement.Place(t, working)
+		p := s.placeLocked(t, working)
 		if p.Kind == placement.Assign {
 			if err := s.store.EnqueueTask(p.Cell, t); err != nil {
 				return err
