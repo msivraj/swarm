@@ -1,10 +1,11 @@
 // Package reputation is a pure core: it accounts for how much an identity has
-// earned an open tier's trust and turns that trust into two decisions the
-// rest of P3 relies on — how much a vote is worth (Weight) and how many
-// redundant replicas a task needs before its result can be trusted (NeedsK).
-// It performs no I/O and reads no clock or randomness: the shell persists the
-// reputation store (keyed by SPIFFE identity) and calls Update after each
-// verdict.
+// earned an open tier's trust and turns that trust into decisions the rest
+// of P3 relies on — how much a vote is worth (Weight), how many redundant
+// replicas a task needs before its result can be trusted (NeedsK), and
+// whether a chronic quorum-loser should be soft-frozen out of work
+// (Eligible). It performs no I/O and reads no clock or randomness: the shell
+// persists the reputation store (keyed by SPIFFE identity) and calls Update
+// after each verdict.
 //
 // Every fresh identity starts at model.Reputation{} — the zero value — which
 // this package treats as the trust floor. A machine that lies its way to a
@@ -108,6 +109,37 @@ func NeedsK(rep model.Reputation, tier model.Tier) int {
 		return minK
 	}
 	return k
+}
+
+// minObservations is the participation floor below which an identity is
+// still "fresh": Eligible never freezes it, so zero-start is preserved. A
+// brand-new machine — including a fresh Sybil — has not yet earned or lost
+// enough trust to judge, so it stays eligible for work.
+const minObservations = 4
+
+// freezeFloor is the Score at or below which a non-fresh identity is frozen.
+// Score clamps to [0, maxScore] (see Update), so a chronic liar bottoms out
+// at exactly freezeFloor after repeated lies — the same floor a brand-new
+// identity starts at.
+const freezeFloor int64 = 0
+
+// Eligible reports whether an identity of this reputation may still be
+// assigned open-tier work. It is FALSE — frozen — iff the identity has
+// participated enough to be judged (Observations >= minObservations) yet has
+// earned ~nothing (Score <= freezeFloor). A FRESH identity (Observations <
+// minObservations) is always eligible: zero-start is preserved, so a
+// brand-new zero-value Reputation is eligible, never frozen.
+//
+// Because Update never lets Score go negative, a chronic liar and a fresh
+// Sybil clamp to the same Score — freezeFloor. Re-minting a fresh identity
+// to dodge a freeze buys nothing but a brief eligible window before the new
+// identity's own Observations climb past minObservations, and costs a fresh
+// proof-of-work to even get there.
+func Eligible(rep model.Reputation) bool {
+	if rep.Observations < minObservations {
+		return true
+	}
+	return rep.Score > freezeFloor
 }
 
 // clamp bounds v to [lo, hi].
