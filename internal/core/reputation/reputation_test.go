@@ -419,3 +419,267 @@ func TestFreshSybilAndChronicLiarClampToSameScore(t *testing.T) {
 		t.Fatalf("fresh sybil (%d) and chronic liar (%d) did not clamp to the same score", freshSybil.Score, chronicLiar.Score)
 	}
 }
+
+// TestDecay is a table-driven test of Decay's fade rate: no decay for
+// elapsed <= 0 or elapsed short of a full decayUnit, decayPerUnit lost per
+// full decayUnit, clamped at the zero floor, and Observations always left
+// untouched.
+func TestDecay(t *testing.T) {
+	tests := []struct {
+		name      string
+		rep       model.Reputation
+		elapsed   model.Duration
+		wantScore int64
+	}{
+		{"zero elapsed unchanged", model.Reputation{Score: 500, Observations: 10}, 0, 500},
+		{"negative elapsed unchanged", model.Reputation{Score: 500, Observations: 10}, -5, 500},
+		{"elapsed short of one unit no decay yet", model.Reputation{Score: 500, Observations: 10}, decayUnit - 1, 500},
+		{"elapsed exactly one unit", model.Reputation{Score: 500, Observations: 10}, decayUnit, 500 - decayPerUnit},
+		{"elapsed several units", model.Reputation{Score: 500, Observations: 10}, 5 * decayUnit, 500 - 5*decayPerUnit},
+		{"decay clamps at the zero floor", model.Reputation{Score: 30, Observations: 10}, 5 * decayUnit, 0},
+		{"decay from the cap", model.Reputation{Score: maxScore, Observations: 10}, decayUnit, maxScore - decayPerUnit},
+		{"zero-value reputation stays at zero", model.Reputation{}, 10 * decayUnit, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Decay(tt.rep, tt.elapsed)
+			if got.Score != tt.wantScore {
+				t.Errorf("Decay(%+v, %d).Score = %d, want %d", tt.rep, tt.elapsed, got.Score, tt.wantScore)
+			}
+			if got.Observations != tt.rep.Observations {
+				t.Errorf("Decay(%+v, %d).Observations = %d, want unchanged %d", tt.rep, tt.elapsed, got.Observations, tt.rep.Observations)
+			}
+			if got.Score < 0 {
+				t.Errorf("Decay(%+v, %d).Score = %d, below the zero floor", tt.rep, tt.elapsed, got.Score)
+			}
+		})
+	}
+}
+
+// TestDecayMonotonicNeverNegative is the ticket's named "decay monotonic +
+// never-negative" property: over a sweep of increasing elapsed values,
+// Score is non-increasing and never goes below zero (preserving the P3
+// Sybil floor), and elapsed <= 0 leaves the reputation unchanged.
+func TestDecayMonotonicNeverNegative(t *testing.T) {
+	starts := []model.Reputation{
+		{},
+		{Score: 1, Observations: 1},
+		{Score: 300, Observations: 10},
+		{Score: maxScore, Observations: 500},
+		{Score: repStep, Observations: minObservations},
+	}
+
+	elapsedSweep := []model.Duration{
+		-100 * decayUnit, -1, 0, 1, decayUnit - 1, decayUnit, 2 * decayUnit, 10 * decayUnit, 1000 * decayUnit,
+	}
+
+	for _, start := range starts {
+		if got := Decay(start, 0); got != start {
+			t.Fatalf("start=%+v: Decay(rep, 0) = %+v, want unchanged", start, got)
+		}
+		if got := Decay(start, -1); got != start {
+			t.Fatalf("start=%+v: Decay(rep, -1) = %+v, want unchanged", start, got)
+		}
+
+		prevScore := start.Score
+		for i, e := range elapsedSweep {
+			got := Decay(start, e)
+			if got.Score < 0 {
+				t.Fatalf("start=%+v elapsed=%d: Score = %d, below the zero floor", start, e, got.Score)
+			}
+			if got.Score > start.Score {
+				t.Fatalf("start=%+v elapsed=%d: Score = %d, above the pre-decay Score %d", start, e, got.Score, start.Score)
+			}
+			if i > 0 && got.Score > prevScore {
+				t.Fatalf("start=%+v elapsed=%d: Score rose from %d to %d as elapsed increased", start, e, prevScore, got.Score)
+			}
+			prevScore = got.Score
+		}
+	}
+}
+
+// TestDecayFadesIntoFreeze is the ticket's named "fades toward the floor"
+// crossing test: a high-Observations veteran decayed enough loses its
+// Eligible status (the intended decay x freeze interaction), while a fresh
+// (low-Observations) identity decayed to the same Score 0 stays eligible —
+// zero-start survives decay.
+func TestDecayFadesIntoFreeze(t *testing.T) {
+	veteran := model.Reputation{Score: maxScore, Observations: minObservations + 50}
+	if !Eligible(veteran) {
+		t.Fatalf("veteran %+v should start eligible", veteran)
+	}
+
+	decayedVeteran := Decay(veteran, 1000*decayUnit)
+	if decayedVeteran.Score != 0 {
+		t.Fatalf("decayedVeteran.Score = %d, want fully decayed to 0", decayedVeteran.Score)
+	}
+	if decayedVeteran.Observations != veteran.Observations {
+		t.Fatalf("decay changed Observations: %d -> %d", veteran.Observations, decayedVeteran.Observations)
+	}
+	if Eligible(decayedVeteran) {
+		t.Fatalf("decayedVeteran %+v should be frozen (Eligible == false) after decaying to the floor", decayedVeteran)
+	}
+
+	fresh := model.Reputation{Score: maxScore, Observations: minObservations - 1}
+	decayedFresh := Decay(fresh, 1000*decayUnit)
+	if decayedFresh.Score != 0 {
+		t.Fatalf("decayedFresh.Score = %d, want fully decayed to 0", decayedFresh.Score)
+	}
+	if !Eligible(decayedFresh) {
+		t.Fatalf("decayedFresh %+v should stay eligible: too few Observations to be judged, zero-start must survive decay", decayedFresh)
+	}
+}
+
+// TestHonestWorkStillRaisesAfterDecay is the ticket's named "honest work
+// still raises" re-assertion: adding Decay/Tier does not change Update's P3
+// behavior — an honest agreement still raises Score, from a fresh, a
+// decayed, or a decayed-into-freeze starting point alike.
+func TestHonestWorkStillRaisesAfterDecay(t *testing.T) {
+	starts := []model.Reputation{
+		{},
+		{Score: 100, Observations: 5},
+		Decay(model.Reputation{Score: maxScore, Observations: minObservations + 10}, 1000*decayUnit),
+	}
+
+	for _, rep := range starts {
+		next := Update(rep, true)
+		if next.Score < rep.Score {
+			t.Fatalf("Update(%+v, true).Score = %d, did not rise from %d", rep, next.Score, rep.Score)
+		}
+		if next.Observations != rep.Observations+1 {
+			t.Fatalf("Update(%+v, true).Observations = %d, want %d", rep, next.Observations, rep.Observations+1)
+		}
+	}
+}
+
+// TestTier is a table-driven test of Tier's three bands: fresh (too few
+// Observations) or low Score reads RepUntrusted, mature-and-high-Score reads
+// RepTrusted, and everything else in between reads RepProvisional.
+func TestTier(t *testing.T) {
+	tests := []struct {
+		name string
+		rep  model.Reputation
+		want model.RepTier
+	}{
+		{"zero value is untrusted", model.Reputation{}, model.RepUntrusted},
+		{"fresh with high score is still untrusted", model.Reputation{Score: 900, Observations: 1}, model.RepUntrusted},
+		{"mature with low score is untrusted", model.Reputation{Score: 100, Observations: 10}, model.RepUntrusted},
+		{"mature just below the lo band is untrusted", model.Reputation{Score: repTierLoBand - 1, Observations: 10}, model.RepUntrusted},
+		{"mature at the lo band is provisional", model.Reputation{Score: repTierLoBand, Observations: minObservations}, model.RepProvisional},
+		{"mature mid score is provisional", model.Reputation{Score: 400, Observations: minObservations}, model.RepProvisional},
+		{"mature just below the hi band is provisional", model.Reputation{Score: repTierHiBand - 1, Observations: 100}, model.RepProvisional},
+		{"mature at the hi band is trusted", model.Reputation{Score: repTierHiBand, Observations: minObservations}, model.RepTrusted},
+		{"mature at the cap is trusted", model.Reputation{Score: maxScore, Observations: 1000}, model.RepTrusted},
+		{"frozen identity is untrusted", model.Reputation{Score: freezeFloor, Observations: minObservations}, model.RepUntrusted},
+		{"negative score clamps to untrusted", model.Reputation{Score: -50, Observations: 100}, model.RepUntrusted},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Tier(tt.rep)
+			if got != tt.want {
+				t.Errorf("Tier(%+v) = %v, want %v", tt.rep, got, tt.want)
+			}
+			if !Eligible(tt.rep) && got != model.RepUntrusted {
+				t.Errorf("Tier(%+v) = %v, want RepUntrusted: a frozen identity must read untrusted", tt.rep, got)
+			}
+		})
+	}
+}
+
+// TestTierMonotonic is the ticket's named "tier buckets monotonic" property:
+// a componentwise-greater-or-equal reputation (both Score and Observations)
+// never maps to a lower RepTier, and a frozen identity always maps to
+// RepUntrusted.
+func TestTierMonotonic(t *testing.T) {
+	scores := []int64{0, 1, 50, 100, repTierLoBand - 1, repTierLoBand, 250, 400, repTierHiBand - 1, repTierHiBand, 700, maxScore}
+	obsCounts := []int{0, 1, 2, minObservations - 1, minObservations, minObservations + 1, 10, 50, 1000}
+
+	var reps []model.Reputation
+	for _, score := range scores {
+		for _, obs := range obsCounts {
+			reps = append(reps, model.Reputation{Score: score, Observations: obs})
+		}
+	}
+
+	for _, r1 := range reps {
+		for _, r2 := range reps {
+			if r2.Score < r1.Score || r2.Observations < r1.Observations {
+				continue // r2 is not componentwise >= r1
+			}
+			if Tier(r2) < Tier(r1) {
+				t.Fatalf("r1=%+v (tier %v) <= r2=%+v (tier %v) componentwise, but Tier(r2) < Tier(r1)",
+					r1, Tier(r1), r2, Tier(r2))
+			}
+		}
+
+		if !Eligible(r1) && Tier(r1) != model.RepUntrusted {
+			t.Fatalf("frozen rep=%+v: Tier = %v, want RepUntrusted", r1, Tier(r1))
+		}
+	}
+}
+
+// TestTierAgreesWithWeightAndNeedsK checks Tier's direction matches
+// Weight's and NeedsK's over a dense sweep of mature (Observations >=
+// minObservations) reputations: as Score rises, Tier is non-decreasing at
+// the same time Weight is non-decreasing and NeedsK (Open tier, the
+// stricter one) is non-increasing — Tier never disagrees with the signals
+// it is derived from, and it changes neither.
+func TestTierAgreesWithWeightAndNeedsK(t *testing.T) {
+	rep := model.Reputation{Observations: minObservations}
+
+	prevTier := model.RepUntrusted
+	prevWeight := -1.0
+	prevK := math.MaxInt64
+
+	for score := int64(0); score <= maxScore; score += 5 {
+		rep.Score = score
+
+		tier := Tier(rep)
+		weight := Weight(rep)
+		k := NeedsK(rep, model.Open)
+
+		if tier < prevTier {
+			t.Fatalf("score=%d: Tier fell from %v to %v", score, prevTier, tier)
+		}
+		if weight < prevWeight {
+			t.Fatalf("score=%d: Weight fell from %v to %v", score, prevWeight, weight)
+		}
+		if k > prevK {
+			t.Fatalf("score=%d: NeedsK rose from %d to %d", score, prevK, k)
+		}
+
+		prevTier, prevWeight, prevK = tier, weight, k
+	}
+}
+
+// TestDecayTierDeterministic asserts Decay and Tier are pure: identical
+// inputs always produce identical outputs.
+func TestDecayTierDeterministic(t *testing.T) {
+	reps := []model.Reputation{
+		{},
+		{Score: 5, Observations: 1},
+		{Score: 300, Observations: 40},
+		{Score: maxScore, Observations: 9999},
+	}
+	elapsedValues := []model.Duration{-1, 0, 1, decayUnit, 100 * decayUnit}
+
+	for _, rep := range reps {
+		tFirst := Tier(rep)
+		for i := 0; i < 10; i++ {
+			if got := Tier(rep); got != tFirst {
+				t.Fatalf("Tier(%+v) not deterministic: %v vs %v", rep, tFirst, got)
+			}
+		}
+
+		for _, elapsed := range elapsedValues {
+			dFirst := Decay(rep, elapsed)
+			for i := 0; i < 10; i++ {
+				if got := Decay(rep, elapsed); got != dFirst {
+					t.Fatalf("Decay(%+v, %d) not deterministic: %+v vs %+v", rep, elapsed, dFirst, got)
+				}
+			}
+		}
+	}
+}

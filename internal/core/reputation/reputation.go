@@ -152,3 +152,89 @@ func clamp(v, lo, hi int64) int64 {
 	}
 	return v
 }
+
+// decayUnit and decayPerUnit calibrate Decay's fade rate: a linear decay
+// (not a half-life curve), expressed in whole days so it is exact integer
+// arithmetic with no floating point to round unpredictably. A once-good but
+// ABSENT identity loses decayPerUnit Score for every full decayUnit it goes
+// unseen. decayPerUnit is chosen so repStep (200) — the Score needed to drop
+// NeedsK by one quorum step — is exactly 10 decayUnit apart, so a machine
+// that stops participating fades one NeedsK step roughly every 10 days.
+const (
+	decayUnit          = model.Duration(24 * 60 * 60 * 1_000_000_000) // one day, in ns
+	decayPerUnit int64 = 20
+)
+
+// Decay fades a reputation's Score toward the zero floor as elapsed grows,
+// modeling stale trust: an identity that has stopped participating should
+// not coast forever on trust it earned in the past. Score falls linearly by
+// decayPerUnit for every full decayUnit of elapsed and is clamped to
+// [0, maxScore] — the same floor Update enforces — so Decay can never push
+// Score below zero. That preserves the P3 Sybil-floor property: a decayed
+// veteran's Score is never worse than a fresh identity's own floor.
+//
+// Observations is left untouched: participation count is a historical fact,
+// not trust that goes stale, and Eligible needs it undisturbed to tell a
+// once-active veteran apart from a brand-new identity.
+//
+// elapsed <= 0 returns rep unchanged — nothing has elapsed to fade. elapsed
+// is data the shell passes in from its own clock (a periodic decay pass);
+// Decay itself never reads a clock.
+//
+// This is the intended decay x freeze interaction: as Score fades toward 0,
+// an ABSENT identity with Observations >= minObservations eventually
+// crosses Eligible's freeze floor (Observations >= minObservations &&
+// Score <= freezeFloor) and is soft-frozen out of open-tier work, exactly
+// as a chronic liar would be. That is deliberate — stale trust must be
+// re-earned by participating again, not merely remembered. A fresh identity
+// (Observations < minObservations) never freezes this way: Eligible always
+// treats it as fresh regardless of Score, so zero-start is preserved even
+// under decay.
+func Decay(rep model.Reputation, elapsed model.Duration) model.Reputation {
+	if elapsed <= 0 {
+		return rep
+	}
+	units := int64(elapsed / decayUnit)
+	next := rep
+	next.Score = clamp(rep.Score-units*decayPerUnit, 0, maxScore)
+	return next
+}
+
+// repTierLoBand and repTierHiBand are the Score cutoffs Tier buckets on,
+// expressed as repStep multiples so Tier reads NeedsK's own step function
+// instead of inventing an unrelated scale. repTierHiBand (3*repStep == 600)
+// is exactly the Score at which NeedsK reaches its floor for the stricter
+// Open tier (steps == 3, so maxK-2*steps == openMinK): RepTrusted starts
+// exactly where NeedsK stops asking for fewer replicas as Score rises
+// further.
+const (
+	repTierLoBand = repStep
+	repTierHiBand = 3 * repStep
+)
+
+// Tier buckets a reputation into a coarse verification-maturity RepTier. It
+// is a read of the same signals Weight and NeedsK already use (Score and
+// Observations) and is monotonic non-decreasing over each: raising either
+// Score or Observations can only raise or hold the tier, never lower it. It
+// does not feed back into Weight, NeedsK, or Eligible — those are entirely
+// unchanged; Tier is an additional coarse view for a caller that wants
+// three buckets instead of a continuous score.
+//
+//   - RepUntrusted: fresh (Observations < minObservations — zero-start is
+//     preserved here too) OR low Score (< repTierLoBand). This also covers
+//     every frozen (!Eligible) identity, since Eligible's freeze requires
+//     Score <= freezeFloor == 0, which is always < repTierLoBand.
+//   - RepTrusted: mature (Observations >= minObservations) AND high Score
+//     (>= repTierHiBand).
+//   - RepProvisional: everything else — some honest history, a mid Score.
+func Tier(rep model.Reputation) model.RepTier {
+	score := clamp(rep.Score, 0, maxScore)
+
+	if rep.Observations < minObservations || score < repTierLoBand {
+		return model.RepUntrusted
+	}
+	if score >= repTierHiBand {
+		return model.RepTrusted
+	}
+	return model.RepProvisional
+}
