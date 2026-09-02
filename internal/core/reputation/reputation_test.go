@@ -279,3 +279,143 @@ func TestDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// TestEligible is a table-driven test of the Eligible boundary: frozen iff
+// Observations >= minObservations AND Score <= freezeFloor, with the exact
+// boundaries pinned.
+func TestEligible(t *testing.T) {
+	tests := []struct {
+		name string
+		rep  model.Reputation
+		want bool
+	}{
+		{"zero value is fresh, eligible", model.Reputation{}, true},
+		{"fresh with a few observations, still eligible", model.Reputation{Observations: minObservations - 1, Score: 0}, true},
+		{"observations just below floor, eligible regardless of score", model.Reputation{Observations: minObservations - 1, Score: maxScore}, true},
+		{"observations at floor, score at freeze floor: frozen", model.Reputation{Observations: minObservations, Score: freezeFloor}, false},
+		{"observations at floor, score just above freeze floor: eligible", model.Reputation{Observations: minObservations, Score: freezeFloor + 1}, true},
+		{"observations well past floor, score at freeze floor: frozen", model.Reputation{Observations: minObservations + 100, Score: freezeFloor}, false},
+		{"observations well past floor, high score: eligible", model.Reputation{Observations: minObservations + 100, Score: maxScore}, true},
+		{"observations at floor, high score: eligible", model.Reputation{Observations: minObservations, Score: maxScore}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Eligible(tt.rep)
+			if got != tt.want {
+				t.Errorf("Eligible(%+v) = %v, want %v", tt.rep, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestEligibleFreezeFloorWithoutBreakingZeroStart is the "freeze floor
+// without breaking zero-start" property: a fresh identity (few Observations)
+// stays eligible no matter how low its Score, a chronic loser (enough
+// Observations, Score clamped to the floor) is frozen, and a well-behaved
+// identity (enough Observations, high Score) stays eligible. Together these
+// pin the shape #03 of the phase doc names — a soft-freeze that never
+// hard-boots an unlucky-but-honest node and never relies on negative scores.
+func TestEligibleFreezeFloorWithoutBreakingZeroStart(t *testing.T) {
+	t.Run("freshIdentityEligible", func(t *testing.T) {
+		for obs := 0; obs < minObservations; obs++ {
+			rep := model.Reputation{Observations: obs, Score: 0}
+			if !Eligible(rep) {
+				t.Fatalf("fresh identity %+v not eligible, zero-start broken", rep)
+			}
+		}
+	})
+
+	t.Run("chronicLoserFrozen", func(t *testing.T) {
+		for obs := minObservations; obs <= minObservations+50; obs++ {
+			rep := model.Reputation{Observations: obs, Score: freezeFloor}
+			if Eligible(rep) {
+				t.Fatalf("chronic loser %+v eligible, want frozen", rep)
+			}
+		}
+	})
+
+	t.Run("wellBehavedEligible", func(t *testing.T) {
+		for obs := minObservations; obs <= minObservations+50; obs++ {
+			rep := model.Reputation{Observations: obs, Score: maxScore}
+			if !Eligible(rep) {
+				t.Fatalf("well-behaved identity %+v not eligible", rep)
+			}
+		}
+	})
+
+	t.Run("freshLiarStillEligible", func(t *testing.T) {
+		// A would-be Sybil/liar clamped to the freeze floor but with too
+		// few Observations to be judged yet is still eligible — it can't
+		// be frozen before it has participated, but it also earns nothing
+		// by re-minting, since the floor is the same one a chronic liar
+		// lands on.
+		for obs := 0; obs < minObservations; obs++ {
+			rep := model.Reputation{Observations: obs, Score: freezeFloor}
+			if !Eligible(rep) {
+				t.Fatalf("fresh liar %+v not eligible, zero-start broken", rep)
+			}
+		}
+	})
+
+	t.Run("updateNeverNegative", func(t *testing.T) {
+		reps := []model.Reputation{
+			{},
+			{Score: 1, Observations: 1},
+			{Score: freezeFloor, Observations: minObservations},
+			{Score: maxScore, Observations: 500},
+		}
+		for _, rep := range reps {
+			for _, agreed := range []bool{true, false} {
+				if got := Update(rep, agreed).Score; got < 0 {
+					t.Fatalf("Update(%+v, %v).Score = %d, went negative — freeze must rely on Observations, not negatives", rep, agreed, got)
+				}
+			}
+		}
+	})
+
+	t.Run("eligibleDeterministic", func(t *testing.T) {
+		reps := []model.Reputation{
+			{},
+			{Observations: minObservations - 1, Score: 0},
+			{Observations: minObservations, Score: freezeFloor},
+			{Observations: minObservations, Score: maxScore},
+		}
+		for _, rep := range reps {
+			first := Eligible(rep)
+			for i := 0; i < 10; i++ {
+				if got := Eligible(rep); got != first {
+					t.Fatalf("Eligible(%+v) not deterministic: %v vs %v", rep, first, got)
+				}
+			}
+		}
+	})
+}
+
+// TestFreshSybilAndChronicLiarClampToSameScore re-derives the guard the
+// ticket calls out: because Update never lets Score go negative, a fresh
+// identity's first lie and a long-lived chronic liar's Score both settle at
+// the exact same floor — freezeFloor — so re-minting a fresh identity to
+// escape a freeze gains nothing on Score (only a brief eligible window
+// before its own Observations climb past minObservations).
+func TestFreshSybilAndChronicLiarClampToSameScore(t *testing.T) {
+	freshSybil := model.Reputation{}
+	for i := 0; i < 20; i++ {
+		freshSybil = Update(freshSybil, false)
+	}
+
+	chronicLiar := model.Reputation{Score: maxScore, Observations: 1000}
+	for i := 0; i < 20; i++ {
+		chronicLiar = Update(chronicLiar, false)
+	}
+
+	if freshSybil.Score != freezeFloor {
+		t.Fatalf("fresh sybil's Score = %d after repeated lies, want freezeFloor %d", freshSybil.Score, freezeFloor)
+	}
+	if chronicLiar.Score != freezeFloor {
+		t.Fatalf("chronic liar's Score = %d after repeated lies, want freezeFloor %d", chronicLiar.Score, freezeFloor)
+	}
+	if freshSybil.Score != chronicLiar.Score {
+		t.Fatalf("fresh sybil (%d) and chronic liar (%d) did not clamp to the same score", freshSybil.Score, chronicLiar.Score)
+	}
+}
