@@ -72,6 +72,41 @@ func Check(claimed model.Result, known model.Result) model.Probe {
 // OnLie returns the action to take when identity id lied on a known-answer
 // probe: Blacklist that identity. This is a pure decision — the shell
 // performs the actual blacklisting.
+//
+// OnLie is one-strike — it blacklists on every lie, with no tolerance for
+// a single transient fault. OnRepeatedLie below is the strike-aware
+// replacement; OnLie is kept unchanged here (signature and behavior) so
+// its existing caller (internal/shell/honeypot's ProbingDispatcher) keeps
+// compiling until that shell is rewired to OnRepeatedLie in a follow-up
+// ticket.
 func OnLie(id model.SpiffeID) model.Action {
 	return model.Action{Kind: model.Blacklist, ID: id}
+}
+
+// DefaultStrikeLimit is the number of honeypot lies an identity may
+// accumulate before OnRepeatedLie blacklists it. Two-strike (default 2): a
+// single transient fault on a honeypot task is tolerated, but a repeat
+// offender is evicted. A documented constant so the threshold is tunable
+// later without touching call sites that pass it explicitly.
+const DefaultStrikeLimit = 2
+
+// OnRepeatedLie is the strike-aware, pure blacklist decision: given that
+// identity id has now accumulated `strikes` honeypot lies (the shell's
+// per-identity counter, taken post-increment — i.e. `strikes` includes the
+// lie that just triggered this call) against a blacklist threshold
+// `limit`, it returns Blacklist iff strikes >= limit, else the inert
+// model.Action{} (NoAction). This is what makes a single transient fault
+// on a honeypot task survivable while a repeat offender is still evicted.
+//
+// A non-positive limit is nonsensical as a strike threshold and must not
+// silently disable eviction, so limit <= 0 falls back to
+// DefaultStrikeLimit rather than being treated as "never blacklist".
+func OnRepeatedLie(id model.SpiffeID, strikes, limit int) model.Action {
+	if limit <= 0 {
+		limit = DefaultStrikeLimit
+	}
+	if strikes >= limit {
+		return model.Action{Kind: model.Blacklist, ID: id}
+	}
+	return model.Action{}
 }
