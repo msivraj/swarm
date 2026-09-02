@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	coreenrollment "github.com/msivraj/swarm/internal/core/enrollment"
+	corehoneypot "github.com/msivraj/swarm/internal/core/honeypot"
 	"github.com/msivraj/swarm/internal/model"
 	"github.com/msivraj/swarm/internal/shell/enrollment"
 	"github.com/msivraj/swarm/internal/shell/verification"
@@ -98,6 +99,21 @@ func constRNG(v float64) func() float64 {
 	return func() float64 { return v }
 }
 
+// sequenceRNG returns a func() float64 seam that yields each of vs in
+// order, then repeats the last value for any further calls — lets a test
+// force a probe on some Dispatch calls and skip it on others
+// deterministically (e.g. probe on the first call only).
+func sequenceRNG(vs ...float64) func() float64 {
+	i := 0
+	return func() float64 {
+		v := vs[i]
+		if i < len(vs)-1 {
+			i++
+		}
+		return v
+	}
+}
+
 // -----------------------------------------------------------------------
 // ProbingDispatcher — table-driven unit tests
 // -----------------------------------------------------------------------
@@ -108,7 +124,7 @@ var (
 	knownResult = model.Result{Value: []byte("known-good"), OK: true}
 )
 
-func TestProbingDispatcher_ForceProbe_LieCaughtAndBlacklisted(t *testing.T) {
+func TestProbingDispatcher_ForceProbe_SecondLieCaughtAndBlacklisted(t *testing.T) {
 	fd := newFakeDispatcher()
 	fd.set("m1", probeTask.ID, model.Result{Value: []byte("wrong-answer"), OK: true})
 	fd.set("m1", realTask.ID, model.Result{Value: []byte("real-answer"), OK: true})
@@ -122,7 +138,22 @@ func TestProbingDispatcher_ForceProbe_LieCaughtAndBlacklisted(t *testing.T) {
 		ProbeResult: knownResult,
 	})
 
+	// First lie: below the default two-strike limit, so m1 must not be
+	// blacklisted yet — a single caught lie is tolerated.
 	res, err := pd.Dispatch(context.Background(), "m1", realTask)
+	if err != nil {
+		t.Fatalf("Dispatch returned error %v, want nil", err)
+	}
+	if string(res.Value) != "real-answer" {
+		t.Errorf("Dispatch result Value = %q, want %q (probe must not corrupt the real result)", res.Value, "real-answer")
+	}
+	if bl.IsBlacklisted("m1") {
+		t.Error("m1's FIRST caught lie already blacklisted it; want tolerated below DefaultStrikeLimit")
+	}
+
+	// Second lie: reaches the default limit (2), so m1 must now be
+	// blacklisted.
+	res, err = pd.Dispatch(context.Background(), "m1", realTask)
 	if err != nil {
 		t.Fatalf("Dispatch returned error %v, want nil", err)
 	}
@@ -132,12 +163,12 @@ func TestProbingDispatcher_ForceProbe_LieCaughtAndBlacklisted(t *testing.T) {
 		t.Errorf("Dispatch result Value = %q, want %q (probe must not corrupt the real result)", res.Value, "real-answer")
 	}
 	if !bl.IsBlacklisted("m1") {
-		t.Error("m1 lied on the injected probe but was not blacklisted")
+		t.Error("m1's SECOND caught lie did not blacklist it")
 	}
 
 	calls := fd.Calls()
-	if len(calls) != 2 {
-		t.Fatalf("Dispatch call count = %d, want 2 (probe then real)", len(calls))
+	if len(calls) != 4 {
+		t.Fatalf("Dispatch call count = %d, want 4 (probe+real, twice)", len(calls))
 	}
 	if calls[0].taskID != probeTask.ID {
 		t.Errorf("first dispatched task = %q, want the probe task %q (probe happens before the real task)", calls[0].taskID, probeTask.ID)
@@ -316,6 +347,230 @@ func TestProbingDispatcher_NilBlacklist_NeverPanics(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------
+// Per-identity honeypot-lie strike tracking: the shell increments a strike
+// on every caught lie and only applies the pure core's blacklist action at
+// the configured limit — see #210.
+// -----------------------------------------------------------------------
+
+func TestProbingDispatcher_Strikes(t *testing.T) {
+	t.Run("oneStrikeNotBlacklisted", func(t *testing.T) {
+		fd := newFakeDispatcher()
+		fd.set("m20", probeTask.ID, model.Result{Value: []byte("wrong-answer"), OK: true})
+		fd.set("m20", realTask.ID, model.Result{Value: []byte("real-answer"), OK: true})
+
+		bl := NewBlacklist()
+		pd := NewProbingDispatcher(Config{
+			Dispatcher: fd,
+			Blacklist:  bl,
+			// Force a probe on the first Dispatch only (rng=0), then never
+			// again (rng≈1) — the second Dispatch below must not add a
+			// second strike, so it isolates "one strike" from "one probe".
+			RNG:         sequenceRNG(0, 0.999999),
+			ProbeTask:   probeTask,
+			ProbeResult: knownResult,
+		})
+
+		if _, err := pd.Dispatch(context.Background(), "m20", realTask); err != nil {
+			t.Fatalf("Dispatch returned error %v, want nil", err)
+		}
+		if bl.IsBlacklisted("m20") {
+			t.Fatal("a single caught lie already blacklisted the identity, want it tolerated below DefaultStrikeLimit")
+		}
+
+		// Still eligible: a second Dispatch (no probe forced this time, so
+		// no second strike is added) reaches the inner dispatcher exactly
+		// like any other machine's would.
+		res, err := pd.Dispatch(context.Background(), "m20", realTask)
+		if err != nil {
+			t.Fatalf("subsequent Dispatch returned error %v, want nil", err)
+		}
+		if string(res.Value) != "real-answer" {
+			t.Errorf("subsequent Dispatch result Value = %q, want %q", res.Value, "real-answer")
+		}
+		if bl.IsBlacklisted("m20") {
+			t.Error("identity was blacklisted after one strike; want still eligible")
+		}
+	})
+
+	t.Run("twoStrikesBlacklisted", func(t *testing.T) {
+		fd := newFakeDispatcher()
+		fd.set("m21", probeTask.ID, model.Result{Value: []byte("wrong-answer"), OK: true})
+		fd.set("m21", realTask.ID, model.Result{Value: []byte("real-answer"), OK: true})
+
+		bl := NewBlacklist()
+		pd := NewProbingDispatcher(Config{
+			Dispatcher:  fd,
+			Blacklist:   bl,
+			RNG:         constRNG(0),
+			ProbeTask:   probeTask,
+			ProbeResult: knownResult,
+		})
+
+		if _, err := pd.Dispatch(context.Background(), "m21", realTask); err != nil {
+			t.Fatalf("first Dispatch returned error %v, want nil", err)
+		}
+		if bl.IsBlacklisted("m21") {
+			t.Fatal("blacklisted after the FIRST lie, want only after the second")
+		}
+
+		if _, err := pd.Dispatch(context.Background(), "m21", realTask); err != nil {
+			t.Fatalf("second Dispatch returned error %v, want nil", err)
+		}
+		if !bl.IsBlacklisted("m21") {
+			t.Fatal("not blacklisted after a SECOND caught lie")
+		}
+	})
+
+	t.Run("strikesPerIdentity", func(t *testing.T) {
+		fd := newFakeDispatcher()
+		fd.set("m22", probeTask.ID, model.Result{Value: []byte("wrong-a"), OK: true})
+		fd.set("m22", realTask.ID, model.Result{Value: []byte("real-a"), OK: true})
+		fd.set("m23", probeTask.ID, model.Result{Value: []byte("wrong-b"), OK: true})
+		fd.set("m23", realTask.ID, model.Result{Value: []byte("real-b"), OK: true})
+
+		bl := NewBlacklist()
+		pd := NewProbingDispatcher(Config{
+			Dispatcher:  fd,
+			Blacklist:   bl,
+			RNG:         constRNG(0),
+			ProbeTask:   probeTask,
+			ProbeResult: knownResult,
+		})
+
+		if _, err := pd.Dispatch(context.Background(), "m22", realTask); err != nil {
+			t.Fatalf("Dispatch(m22) returned error %v, want nil", err)
+		}
+		if _, err := pd.Dispatch(context.Background(), "m23", realTask); err != nil {
+			t.Fatalf("Dispatch(m23) returned error %v, want nil", err)
+		}
+
+		if bl.IsBlacklisted("m22") {
+			t.Error("m22 blacklisted after only one lie of its own — strikes must not cross identities")
+		}
+		if bl.IsBlacklisted("m23") {
+			t.Error("m23 blacklisted after only one lie of its own — strikes must not cross identities")
+		}
+	})
+
+	t.Run("matchNoStrike", func(t *testing.T) {
+		fd := newFakeDispatcher()
+		fd.set("m24", probeTask.ID, knownResult) // always answers the probe correctly
+		fd.set("m24", realTask.ID, model.Result{Value: []byte("real-answer"), OK: true})
+
+		bl := NewBlacklist()
+		pd := NewProbingDispatcher(Config{
+			Dispatcher:  fd,
+			Blacklist:   bl,
+			RNG:         constRNG(0),
+			ProbeTask:   probeTask,
+			ProbeResult: knownResult,
+		})
+
+		// Many correct probe answers in a row: if a Match were mistakenly
+		// counted as a strike, this alone would eventually reach the
+		// blacklist limit — it must not.
+		for i := 0; i < 5; i++ {
+			if _, err := pd.Dispatch(context.Background(), "m24", realTask); err != nil {
+				t.Fatalf("Dispatch #%d returned error %v, want nil", i, err)
+			}
+		}
+		if bl.IsBlacklisted("m24") {
+			t.Fatal("an honest identity that always answers the probe correctly was blacklisted")
+		}
+
+		// Now switch to a lie: this is the identity's FIRST real strike, so
+		// it alone must not blacklist. If the prior matches had wrongly
+		// incremented the counter, this single lie would push it over the
+		// limit.
+		fd.set("m24", probeTask.ID, model.Result{Value: []byte("now-lying"), OK: true})
+		if _, err := pd.Dispatch(context.Background(), "m24", realTask); err != nil {
+			t.Fatalf("Dispatch after switching to a lie returned error %v, want nil", err)
+		}
+		if bl.IsBlacklisted("m24") {
+			t.Error("blacklisted on its first lie — prior matches must not have counted as strikes")
+		}
+	})
+
+	t.Run("probeErrorNoStrike", func(t *testing.T) {
+		fd := newFakeDispatcher()
+		fd.setErr("m25", probeTask.ID, errors.New("machine unreachable"))
+		fd.set("m25", realTask.ID, model.Result{Value: []byte("real-answer"), OK: true})
+
+		bl := NewBlacklist()
+		pd := NewProbingDispatcher(Config{
+			Dispatcher:  fd,
+			Blacklist:   bl,
+			RNG:         constRNG(0),
+			ProbeTask:   probeTask,
+			ProbeResult: knownResult,
+		})
+
+		// Repeated inconclusive (errored) probes: if an error were wrongly
+		// counted as a strike, enough of them would eventually blacklist
+		// the identity — it must not, no matter how many.
+		for i := 0; i < 5; i++ {
+			res, err := pd.Dispatch(context.Background(), "m25", realTask)
+			if err != nil {
+				t.Fatalf("Dispatch #%d returned error %v, want nil (the real dispatch itself succeeded)", i, err)
+			}
+			if string(res.Value) != "real-answer" {
+				t.Errorf("Dispatch #%d result Value = %q, want %q", i, res.Value, "real-answer")
+			}
+		}
+		if bl.IsBlacklisted("m25") {
+			t.Error("blacklisted after repeated probe-dispatch errors, want errors to never count as strikes")
+		}
+	})
+
+	t.Run("customStrikeLimitShiftsThreshold", func(t *testing.T) {
+		fd := newFakeDispatcher()
+		fd.set("m26", probeTask.ID, model.Result{Value: []byte("wrong-answer"), OK: true})
+		fd.set("m26", realTask.ID, model.Result{Value: []byte("real-answer"), OK: true})
+
+		bl := NewBlacklist()
+		pd := NewProbingDispatcher(Config{
+			Dispatcher:  fd,
+			Blacklist:   bl,
+			RNG:         constRNG(0),
+			ProbeTask:   probeTask,
+			ProbeResult: knownResult,
+			StrikeLimit: 3,
+		})
+
+		for i, wantBlacklisted := range []bool{false, false, true} {
+			if _, err := pd.Dispatch(context.Background(), "m26", realTask); err != nil {
+				t.Fatalf("Dispatch #%d returned error %v, want nil", i+1, err)
+			}
+			if got := bl.IsBlacklisted("m26"); got != wantBlacklisted {
+				t.Errorf("after strike %d: IsBlacklisted = %v, want %v (StrikeLimit=3)", i+1, got, wantBlacklisted)
+			}
+		}
+	})
+}
+
+// TestConfig_strikeLimit tests Config.strikeLimit's default behavior
+// directly: zero/unset falls back to corehoneypot.DefaultStrikeLimit, and a
+// configured positive value is used unchanged.
+func TestConfig_strikeLimit(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want int
+	}{
+		{"zero value defaults", Config{}, corehoneypot.DefaultStrikeLimit},
+		{"negative value defaults", Config{StrikeLimit: -1}, corehoneypot.DefaultStrikeLimit},
+		{"configured value used", Config{StrikeLimit: 5}, 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.strikeLimit(); got != tt.want {
+				t.Errorf("strikeLimit() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// -----------------------------------------------------------------------
 // Concurrency safety (-race): many concurrent Dispatch calls across many
 // machines, mixing honest and lying behavior, must land in the correct
 // blacklist state with no data race.
@@ -323,6 +578,7 @@ func TestProbingDispatcher_NilBlacklist_NeverPanics(t *testing.T) {
 
 func TestProbingDispatcher_ConcurrentDispatch_RaceSafe(t *testing.T) {
 	const nMachines = 40
+	const dispatchesPerMachine = 2 // == DefaultStrikeLimit: exactly enough for a liar to cross it
 
 	fd := newFakeDispatcher()
 	liars := make(map[model.MachineID]bool, nMachines)
@@ -346,15 +602,20 @@ func TestProbingDispatcher_ConcurrentDispatch_RaceSafe(t *testing.T) {
 		ProbeResult: knownResult,
 	})
 
+	// Two concurrent Dispatch calls per machine — enough for a liar's strike
+	// count to reach DefaultStrikeLimit, and enough to race the SAME
+	// identity's strike counter against itself (not just across machines).
 	var wg sync.WaitGroup
 	for m := range liars {
-		wg.Add(1)
-		go func(machine model.MachineID) {
-			defer wg.Done()
-			if _, err := pd.Dispatch(context.Background(), machine, realTask); err != nil {
-				t.Errorf("Dispatch(%s) returned error %v", machine, err)
-			}
-		}(m)
+		for i := 0; i < dispatchesPerMachine; i++ {
+			wg.Add(1)
+			go func(machine model.MachineID) {
+				defer wg.Done()
+				if _, err := pd.Dispatch(context.Background(), machine, realTask); err != nil {
+					t.Errorf("Dispatch(%s) returned error %v", machine, err)
+				}
+			}(m)
+		}
 	}
 	wg.Wait()
 
@@ -396,6 +657,12 @@ func TestHoneypot_EndToEnd_BlacklistedMachineExcludedFromFutureKSets(t *testing.
 		// setup, since a honeypot task's known answer is whatever the
 		// operator planted, independent of what any given real task asks.
 		ProbeResult: model.Result{Value: honestValue, OK: true},
+		// StrikeLimit: 1 here so a single probe within round 1 blacklists
+		// m5 — this test is about propagation (a blacklisted identity is
+		// excluded from every future K-set), not about the two-strike
+		// threshold itself, which dispatcher_test.go's strike tests cover
+		// directly.
+		StrikeLimit: 1,
 	})
 
 	coord := verification.New(verification.Config{
