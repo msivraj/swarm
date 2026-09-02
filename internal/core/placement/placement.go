@@ -5,7 +5,11 @@
 // execute an effect.
 package placement
 
-import "github.com/msivraj/swarm/internal/model"
+import (
+	"sort"
+
+	"github.com/msivraj/swarm/internal/model"
+)
 
 // Kind is the tag of a Placement's tagged union.
 type Kind int
@@ -107,6 +111,92 @@ func Satisfies(offered, required model.CapSet) bool {
 		}
 	}
 	return true
+}
+
+// localityDistance returns the hierarchical network distance between
+// loc.Origin and cell's coordinates in loc.Zone: 0 same-rack, 1 same-AZ
+// (different rack), 2 same-region (different AZ), 3 cross-region. A cell
+// absent from loc.Zone — including when loc.Zone is nil, since a nil-map
+// lookup is a safe no-op in Go — gets the max distance: fail-far rather than
+// panic, and deterministic (never guesses a closer distance for missing
+// data).
+func localityDistance(loc model.LocalityGraph, cell model.CellID) int {
+	topo, ok := loc.Zone[cell]
+	if !ok {
+		return 3
+	}
+	switch {
+	case topo.Region == loc.Origin.Region && topo.AZ == loc.Origin.AZ && topo.Rack == loc.Origin.Rack:
+		return 0
+	case topo.Region == loc.Origin.Region && topo.AZ == loc.Origin.AZ:
+		return 1
+	case topo.Region == loc.Origin.Region:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// Rank scores each candidate cell by capability match then network locality
+// — a bounded, SINGLE-PASS greedy ranking (§18: not an iterative solver). It
+// computes one model.Ranked per candidate in one pass over cands, reusing
+// Satisfies(c.Caps, t.Requires) for CapMatch — the same capability-match
+// logic Place/PlaceCapable use, never reimplemented — and localityDistance
+// for Distance, then orders the result with a single sort.SliceStable on
+// that precomputed total order:
+//
+//  1. CapMatch descending — a capable cell always outranks an incapable one.
+//  2. Distance ascending — closer locality preferred.
+//  3. Free descending — more headroom preferred.
+//  4. Cell ascending — deterministic final tie-break, never map-iteration
+//     order (LocalityGraph.Zone is a map, but Rank only ever reads it by
+//     key, so its internal order never leaks into the result).
+//
+// Rank always returns exactly len(cands) entries — one pass, one sort, no
+// iteration-to-convergence — so it provably terminates for any input,
+// including an empty or nil cands.
+func Rank(t model.Task, cands []model.CellView, loc model.LocalityGraph) []model.Ranked {
+	ranked := make([]model.Ranked, len(cands))
+	for i, c := range cands {
+		ranked[i] = model.Ranked{
+			Cell:     c.ID,
+			CapMatch: Satisfies(c.Caps, t.Requires),
+			Distance: localityDistance(loc, c.ID),
+			Free:     c.Free,
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		a, b := ranked[i], ranked[j]
+		if a.CapMatch != b.CapMatch {
+			return a.CapMatch
+		}
+		if a.Distance != b.Distance {
+			return a.Distance < b.Distance
+		}
+		if a.Free != b.Free {
+			return a.Free > b.Free
+		}
+		return a.Cell < b.Cell
+	})
+	return ranked
+}
+
+// BestFit returns the Placement for the single best-ranked candidate that is
+// both capable (CapMatch) and has room (Free > 0) — a greedy best-fit pick,
+// not a solver: it calls Rank once, then makes one bounded scan of the
+// already-sorted result for the first entry that fits, which by
+// construction is the best-ranked one that does. If no candidate qualifies
+// — including when cands is empty — it returns the same NoCapacity sentinel
+// Place/PlaceAcross use, so BestFit never invents a placement decision they
+// would not have made; the shell is expected to fall back to Place/
+// PlaceAcross on NoCapacity.
+func BestFit(t model.Task, cands []model.CellView, loc model.LocalityGraph) Placement {
+	for _, r := range Rank(t, cands, loc) {
+		if r.CapMatch && r.Free > 0 {
+			return Placement{Kind: Assign, Cell: r.Cell}
+		}
+	}
+	return Placement{Kind: NoCapacity}
 }
 
 // PlaceCapable is Place restricted to cells whose Caps satisfy t.Requires.
