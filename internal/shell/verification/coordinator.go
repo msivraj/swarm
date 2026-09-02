@@ -48,6 +48,7 @@ import (
 	"context"
 	"errors"
 
+	corereputation "github.com/msivraj/swarm/internal/core/reputation"
 	coreverification "github.com/msivraj/swarm/internal/core/verification"
 	"github.com/msivraj/swarm/internal/model"
 	"github.com/msivraj/swarm/internal/shell/enrollment"
@@ -60,9 +61,10 @@ var (
 	ErrNoDispatcher = errors.New("verification: Config.Dispatcher must not be nil")
 	// ErrNoClock means Config.Clock was nil.
 	ErrNoClock = errors.New("verification: Config.Clock must not be nil")
-	// ErrEmptyPool means every machine in the supplied pool was excluded
-	// (blacklisted), leaving nothing to assign.
-	ErrEmptyPool = errors.New("verification: pool has no eligible (non-blacklisted) machines")
+	// ErrEmptyPool means every machine in the supplied pool was excluded —
+	// blacklisted, frozen (chronic quorum-loser), or both — leaving nothing
+	// to assign.
+	ErrEmptyPool = errors.New("verification: pool has no eligible (non-blacklisted, non-frozen) machines")
 	// ErrNoQuorum means every attempt was exhausted (MaxAttempts rounds of
 	// assign+dispatch+collect) without reaching an Agreed verdict.
 	ErrNoQuorum = errors.New("verification: exhausted retries without reaching an Agreed verdict")
@@ -133,8 +135,8 @@ func quorumFloor(k int) int {
 //  1. Look up requester's reputation (zero value if Config.Reputation is
 //     nil or requester has no history) and use it, with tier, to size K via
 //     the pure core's Redundancy.
-//  2. Assign K machines from pool, excluding any blacklisted identity
-//     (fork b), using a seed that is fresh on every attempt.
+//  2. Assign K machines from pool, excluding any blacklisted (fork b) or
+//     frozen (#211) identity, using a seed that is fresh on every attempt.
 //  3. Dispatch to the assigned machines concurrently and collect their
 //     results within Config.Timeout.
 //  4. Enforce the minimum-response floor (quorumFloor): fewer responses
@@ -145,9 +147,10 @@ func quorumFloor(k int) int {
 //     Disputed/Insufficient (including a below-floor round) retries with a
 //     fresh seed.
 //
-// Verify returns ErrEmptyPool if every machine in pool is blacklisted, and
-// ErrNoQuorum if every attempt is exhausted without reaching Agreed — in
-// the latter case the last non-Agreed Verdict observed is also returned.
+// Verify returns ErrEmptyPool if every machine in pool is blacklisted or
+// frozen, and ErrNoQuorum if every attempt is exhausted without reaching
+// Agreed — in the latter case the last non-Agreed Verdict observed is also
+// returned.
 func (c *Coordinator) Verify(ctx context.Context, task model.Task, tier model.Tier, requester model.SpiffeID, pool []model.MachineID, baseSeed uint64) (model.Verdict, error) {
 	if c.cfg.Dispatcher == nil {
 		return model.Verdict{}, ErrNoDispatcher
@@ -201,12 +204,19 @@ func (c *Coordinator) Verify(ctx context.Context, task model.Task, tier model.Ti
 	return last, ErrNoQuorum
 }
 
-// eligiblePool returns the machines in pool that are not blacklisted (fork
-// b, #132), preserving order. A nil Config.Blacklist excludes nothing.
+// eligiblePool returns the machines in pool that are neither blacklisted
+// (fork b, #132) nor frozen (a chronic quorum-loser per the pure
+// reputation.Eligible predicate, #209/#211), preserving order. A nil
+// Config.Blacklist excludes nothing on the blacklist axis; a nil
+// Config.Reputation excludes nothing on the freeze axis — every machine is
+// treated as the zero-value (fresh, eligible) Reputation.
 func (c *Coordinator) eligiblePool(pool []model.MachineID) []model.MachineID {
 	out := make([]model.MachineID, 0, len(pool))
 	for _, m := range pool {
 		if c.cfg.Blacklist != nil && c.cfg.Blacklist.IsBlacklisted(identityOf(m)) {
+			continue
+		}
+		if c.cfg.Reputation != nil && !corereputation.Eligible(c.cfg.Reputation.Get(identityOf(m))) {
 			continue
 		}
 		out = append(out, m)
