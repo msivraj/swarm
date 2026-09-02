@@ -256,6 +256,12 @@ func TestP3Capstone_UntrustedPoolWithPlantedLiars(t *testing.T) {
 		RNG:         p3ConstRNG(0), // force a probe on every dispatch this round
 		ProbeTask:   probeTask,
 		ProbeResult: probeResult,
+		// StrikeLimit: 1 — each liar is only ever dispatched (and so only
+		// ever probed) once per round in this fixture, so this capstone
+		// exercises the honeypot's catch-and-exclude path, not the
+		// strike-aware threshold itself (see #210's internal/shell/honeypot
+		// tests for the two-strike-tolerance property directly).
+		StrikeLimit: 1,
 	})
 
 	coord := verification.New(verification.Config{

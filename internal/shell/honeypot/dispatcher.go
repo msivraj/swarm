@@ -7,10 +7,11 @@
 // liveness-eviction path, consulted at enrollment/dispatch admission.
 //
 // This package makes no security DECISION of its own — ShouldProbe, Check,
-// and OnLie all come from the pure internal/core/honeypot core. It only
-// performs the I/O those decisions license: drawing the rng sample that
-// decides whether to probe, sending the known-answer task, and writing a
-// caught lie into the shared Blacklist.
+// and OnRepeatedLie all come from the pure internal/core/honeypot core. It
+// only performs the I/O those decisions license: drawing the rng sample
+// that decides whether to probe, sending the known-answer task, tracking
+// each identity's honeypot-lie strike count, and writing a blacklist
+// action into the shared Blacklist once the strike-aware core decides to.
 //
 // # Hook shape: a Dispatcher decorator
 //
@@ -43,9 +44,10 @@
 //  3. if probing, sends a SIDE probe — Config.ProbeTask — to m over the
 //     INNER Dispatcher (never back through itself, so the probe never
 //     recurses) and compares the claim against Config.ProbeResult with the
-//     pure core's Check. A Lie applies the pure core's OnLie action to
-//     Config.Blacklist. The side probe never touches or corrupts the real
-//     task's result;
+//     pure core's Check. A Lie increments m's per-identity strike counter
+//     and applies the pure core's OnRepeatedLie action to Config.Blacklist
+//     — inert (NoAction) below Config.StrikeLimit, Blacklist at or above
+//     it. The side probe never touches or corrupts the real task's result;
 //  4. always forwards the real task to the inner Dispatcher and returns
 //     its real result — probing is additive, not a substitute for the
 //     real dispatch.
@@ -69,6 +71,7 @@ package honeypot
 
 import (
 	"context"
+	"sync"
 
 	corehoneypot "github.com/msivraj/swarm/internal/core/honeypot"
 	"github.com/msivraj/swarm/internal/model"
@@ -108,8 +111,8 @@ type Config struct {
 	// machine having the zero-value (untrusted, max probe rate)
 	// Reputation.
 	Reputation ReputationReader
-	// Blacklist receives the pure core's OnLie action when a probe catches
-	// a lie. Required — without it, a caught lie has nowhere to go.
+	// Blacklist receives the pure core's OnRepeatedLie action when a probe
+	// catches a lie. Required — without it, a caught lie has nowhere to go.
 	Blacklist BlacklistWriter
 	// RNG draws a uniform [0,1) sample for ShouldProbe. This is the
 	// shell's seam: the core never draws randomness itself. Required.
@@ -120,21 +123,42 @@ type Config struct {
 	// ProbeResult is the known-good result ProbeTask's claim is checked
 	// against.
 	ProbeResult model.Result
+	// StrikeLimit is the number of honeypot lies an identity may accumulate
+	// before it is blacklisted, per the strike-aware
+	// corehoneypot.OnRepeatedLie. Zero (the unset default) is treated as
+	// corehoneypot.DefaultStrikeLimit (2) — a single transient fault on a
+	// honeypot probe is tolerated, but a repeat offender is evicted.
+	StrikeLimit int
+}
+
+// strikeLimit returns cfg's configured StrikeLimit, defaulting a zero/unset
+// value to corehoneypot.DefaultStrikeLimit. The pure core also guards
+// limit<=0 the same way, but defaulting cleanly here keeps the shell's
+// config self-describing.
+func (cfg Config) strikeLimit() int {
+	if cfg.StrikeLimit <= 0 {
+		return corehoneypot.DefaultStrikeLimit
+	}
+	return cfg.StrikeLimit
 }
 
 // ProbingDispatcher wraps a verification.Dispatcher, injecting known-answer
 // honeypot probes at a sampled rate and blacklisting any identity caught
-// lying about one. It implements verification.Dispatcher itself, so it can
-// be composed directly into a Coordinator's Config.Dispatcher without any
-// change to internal/shell/verification. See the package doc for the exact
-// hook shape.
+// lying about one twice (see corehoneypot.OnRepeatedLie). It implements
+// verification.Dispatcher itself, so it can be composed directly into a
+// Coordinator's Config.Dispatcher without any change to
+// internal/shell/verification. See the package doc for the exact hook
+// shape.
 type ProbingDispatcher struct {
 	cfg Config
+
+	mu      sync.Mutex
+	strikes map[model.SpiffeID]int
 }
 
 // NewProbingDispatcher builds a ProbingDispatcher from cfg.
 func NewProbingDispatcher(cfg Config) *ProbingDispatcher {
-	return &ProbingDispatcher{cfg: cfg}
+	return &ProbingDispatcher{cfg: cfg, strikes: make(map[model.SpiffeID]int)}
 }
 
 // identityOf maps a dispatch-pool MachineID to the SpiffeID it is
@@ -166,10 +190,14 @@ func (p *ProbingDispatcher) Dispatch(ctx context.Context, machine model.MachineI
 
 // probe sends Config.ProbeTask to machine over the inner Dispatcher — never
 // back through p itself, so a probe never recursively triggers another
-// probe — and blacklists id via Config.Blacklist if the pure core's Check
-// says the claim is a Lie. A Dispatch error on the probe itself (e.g. the
-// machine is unreachable) is not evidence of a lie either way, so it is
-// treated as inconclusive and simply skipped — no blacklist action, no
+// probe. If the pure core's Check says the claim is a Lie, it increments
+// id's per-identity strike counter and applies the strike-aware pure core's
+// OnRepeatedLie action to Config.Blacklist — which only blacklists once id
+// has accumulated Config.StrikeLimit lies (DefaultStrikeLimit, 2, when
+// unset), so a single caught lie is inert (NoAction) and a second one
+// evicts. A Dispatch error on the probe itself (e.g. the machine is
+// unreachable) is not evidence of a lie either way, so it is treated as
+// inconclusive and simply skipped — no strike, no blacklist action, no
 // panic, no effect on the caller's real dispatch that follows.
 func (p *ProbingDispatcher) probe(ctx context.Context, machine model.MachineID, id model.SpiffeID) {
 	claimed, err := p.cfg.Dispatcher.Dispatch(ctx, machine, p.cfg.ProbeTask)
@@ -179,9 +207,22 @@ func (p *ProbingDispatcher) probe(ctx context.Context, machine model.MachineID, 
 	if corehoneypot.Check(claimed, p.cfg.ProbeResult) != model.Lie {
 		return
 	}
+
+	strikes := p.strike(id)
 	if p.cfg.Blacklist != nil {
-		p.cfg.Blacklist.Apply(corehoneypot.OnLie(id))
+		p.cfg.Blacklist.Apply(corehoneypot.OnRepeatedLie(id, strikes, p.cfg.strikeLimit()))
 	}
+}
+
+// strike increments and returns id's post-increment honeypot-lie strike
+// count. Concurrency-safe: Dispatch runs concurrently across the K assigned
+// machines, so distinct identities' strikes must count independently and
+// the same identity's concurrent lies must not race.
+func (p *ProbingDispatcher) strike(id model.SpiffeID) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.strikes[id]++
+	return p.strikes[id]
 }
 
 // compile-time assertion: ProbingDispatcher implements verification.Dispatcher.
