@@ -146,6 +146,159 @@ func TestOnLie_AlwaysBlacklistsExactlyTheGivenID(t *testing.T) {
 	}
 }
 
+// -----------------------------------------------------------------------
+// OnRepeatedLie — strike-aware blacklist decision (two-strike eviction)
+// -----------------------------------------------------------------------
+
+func TestOnRepeatedLie(t *testing.T) {
+	const id model.SpiffeID = "spiffe://open/repeat-offender"
+
+	tests := []struct {
+		name    string
+		id      model.SpiffeID
+		strikes int
+		limit   int
+		want    model.Action
+	}{
+		{
+			name:    "strikeBelowLimitNoAction",
+			id:      id,
+			strikes: 1,
+			limit:   2,
+			want:    model.Action{},
+		},
+		{
+			name:    "strikeAtLimitBlacklists",
+			id:      id,
+			strikes: 2,
+			limit:   2,
+			want:    model.Action{Kind: model.Blacklist, ID: id},
+		},
+		{
+			name:    "strikeAboveLimitBlacklists",
+			id:      id,
+			strikes: 3,
+			limit:   2,
+			want:    model.Action{Kind: model.Blacklist, ID: id},
+		},
+		{
+			name:    "zero strikes, default limit => no action",
+			id:      id,
+			strikes: 0,
+			limit:   2,
+			want:    model.Action{},
+		},
+		{
+			name:    "custom limit shifts threshold: below custom limit => no action",
+			id:      id,
+			strikes: 2,
+			limit:   3,
+			want:    model.Action{},
+		},
+		{
+			name:    "custom limit shifts threshold: at custom limit => blacklist",
+			id:      id,
+			strikes: 3,
+			limit:   3,
+			want:    model.Action{Kind: model.Blacklist, ID: id},
+		},
+		{
+			name:    "limit <= 0 falls back to DefaultStrikeLimit: below default => no action",
+			id:      id,
+			strikes: 1,
+			limit:   0,
+			want:    model.Action{},
+		},
+		{
+			name:    "limit <= 0 falls back to DefaultStrikeLimit: at default => blacklist",
+			id:      id,
+			strikes: DefaultStrikeLimit,
+			limit:   0,
+			want:    model.Action{Kind: model.Blacklist, ID: id},
+		},
+		{
+			name:    "negative limit also falls back to DefaultStrikeLimit",
+			id:      id,
+			strikes: DefaultStrikeLimit,
+			limit:   -5,
+			want:    model.Action{Kind: model.Blacklist, ID: id},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := OnRepeatedLie(tt.id, tt.strikes, tt.limit); got != tt.want {
+				t.Errorf("OnRepeatedLie(%q, %d, %d) = %+v, want %+v", tt.id, tt.strikes, tt.limit, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestOnRepeatedLie_MatchNeverBlacklists confirms a Check that returns
+// Match is not a strike: a caller that only invokes OnRepeatedLie on Lie
+// outcomes never routes a Match into a Blacklist action. Since Match never
+// increments the shell's strike counter, exercising OnRepeatedLie with
+// strikes == 0 (the "no lie yet" state) must never blacklist regardless of
+// limit.
+func TestOnRepeatedLie_MatchNeverBlacklists(t *testing.T) {
+	claimed := model.Result{ID: "m1", Value: []byte("known-answer"), OK: true}
+	known := model.Result{ID: "known", Value: []byte("known-answer"), OK: true}
+
+	if probe := Check(claimed, known); probe != model.Match {
+		t.Fatalf("Check(%+v, %+v) = %v, want Match", claimed, known, probe)
+	}
+
+	const id model.SpiffeID = "spiffe://open/never-lied"
+	for _, limit := range []int{1, 2, 3, DefaultStrikeLimit} {
+		if got := OnRepeatedLie(id, 0, limit); got.Kind == model.Blacklist {
+			t.Errorf("OnRepeatedLie(%q, 0, %d) = %+v, want NoAction — a Match must never blacklist", id, limit, got)
+		}
+	}
+}
+
+// TestOnRepeatedLie_Monotone confirms that once strikes reaches the limit,
+// every higher strike count still blacklists — the decision never reverts
+// to NoAction as strikes keeps climbing.
+func TestOnRepeatedLie_Monotone(t *testing.T) {
+	const id model.SpiffeID = "spiffe://open/monotone"
+	const limit = 2
+
+	for strikes := limit; strikes <= limit+10; strikes++ {
+		got := OnRepeatedLie(id, strikes, limit)
+		want := model.Action{Kind: model.Blacklist, ID: id}
+		if got != want {
+			t.Fatalf("OnRepeatedLie(%q, %d, %d) = %+v, want %+v (monotone once at/over limit)", id, strikes, limit, got, want)
+		}
+	}
+}
+
+// TestOnRepeatedLie_Deterministic confirms the pure-core guarantee:
+// identical (id, strikes, limit) inputs always yield identical output.
+func TestOnRepeatedLie_Deterministic(t *testing.T) {
+	ids := []model.SpiffeID{"", "spiffe://open/a", "spiffe://open/b-longer"}
+	strikesLimits := [][2]int{{0, 2}, {1, 2}, {2, 2}, {3, 2}, {5, 3}, {1, 0}, {2, -1}}
+
+	for _, id := range ids {
+		for _, sl := range strikesLimits {
+			strikes, limit := sl[0], sl[1]
+			first := OnRepeatedLie(id, strikes, limit)
+			for i := 0; i < 5; i++ {
+				if got := OnRepeatedLie(id, strikes, limit); got != first {
+					t.Fatalf("OnRepeatedLie(%q, %d, %d) is nondeterministic: got %+v then %+v", id, strikes, limit, first, got)
+				}
+			}
+		}
+	}
+}
+
+// TestDefaultStrikeLimit pins the documented default so a change to it is
+// deliberate and visible in a diff, not an accidental drift.
+func TestDefaultStrikeLimit(t *testing.T) {
+	if DefaultStrikeLimit != 2 {
+		t.Fatalf("DefaultStrikeLimit = %d, want 2", DefaultStrikeLimit)
+	}
+}
+
 func bytesEqual(a, b []byte) bool {
 	if len(a) != len(b) {
 		return false
