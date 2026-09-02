@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/msivraj/swarm/internal/core/admission"
 	"github.com/msivraj/swarm/internal/model"
 	"github.com/msivraj/swarm/internal/shell/transport"
 )
@@ -170,5 +171,75 @@ func TestMitosisSignalCountFallbackUnchangedWithNoSource(t *testing.T) {
 	}
 	if psResp.GetMachines() != 5 {
 		t.Fatalf("Ps after count-based split: Machines = %d, want 5 (no agent lost across the split)", psResp.GetMachines())
+	}
+}
+
+// TestCellCouplingsLockedTightestWins is the #232 regression: a single cell
+// co-reserved by a Barrier gang AND an Independent gang must resolve to
+// Barrier (the tightest coupling, rank 0), deterministically — never
+// last-writer-wins over s.gangJobs' map iteration order. It seeds s.gangJobs
+// directly (rather than driving two real overlapping gang admissions, which
+// admission.AdmitGang would ordinarily prevent) with both possible job-ID
+// insertion orders, and repeats the call across many map instances: Go
+// deliberately randomizes map iteration order per range, so a flaky result
+// here would expose a real order dependence rather than a testing artifact.
+func TestCellCouplingsLockedTightestWins(t *testing.T) {
+	clock := &testClock{}
+	cfg := fastConfig()
+	client, srv, teardown := newTestServer(t, cfg, clock)
+	defer teardown()
+
+	ctx := context.Background()
+	joinResp := joinAgent(t, ctx, client, "agent-1", 1)
+	cell := model.CellID(joinResp.GetCellId())
+
+	barrierJob := model.JobSpec{ID: "job-barrier", Coupling: model.Barrier}
+	independentJob := model.JobSpec{ID: "job-independent", Coupling: model.Independent}
+	assignment := []admission.Assignment{{Cell: cell, Members: 1}}
+
+	for _, order := range [][2]model.JobSpec{
+		{barrierJob, independentJob},
+		{independentJob, barrierJob},
+	} {
+		for i := 0; i < 50; i++ {
+			srv.mu.Lock()
+			srv.gangJobs = map[model.JobID]gangReservation{
+				order[0].ID: {job: order[0], assignments: assignment},
+				order[1].ID: {job: order[1], assignments: assignment},
+			}
+			couplings := srv.cellCouplingsLocked()
+			srv.mu.Unlock()
+
+			if got := couplings[cell]; got != model.Barrier {
+				t.Fatalf("cellCouplingsLocked() insertion order %v, iteration %d: coupling = %v, want Barrier (tightest of Barrier+Independent)", order, i, got)
+			}
+		}
+	}
+}
+
+// TestCouplingRankOrdersTightestToLoosest is the table-driven check for
+// couplingRank's total order — Barrier < Leader < MessagePassing <
+// Independent — that cellCouplingsLocked's tightest-wins comparison depends
+// on.
+func TestCouplingRankOrdersTightestToLoosest(t *testing.T) {
+	tests := []struct {
+		coupling model.Coupling
+		rank     int
+	}{
+		{model.Barrier, 0},
+		{model.Leader, 1},
+		{model.MessagePassing, 2},
+		{model.Independent, 3},
+	}
+	for _, tt := range tests {
+		if got := couplingRank(tt.coupling); got != tt.rank {
+			t.Errorf("couplingRank(%v) = %d, want %d", tt.coupling, got, tt.rank)
+		}
+	}
+
+	if couplingRank(model.Barrier) >= couplingRank(model.Leader) ||
+		couplingRank(model.Leader) >= couplingRank(model.MessagePassing) ||
+		couplingRank(model.MessagePassing) >= couplingRank(model.Independent) {
+		t.Fatal("couplingRank must strictly order Barrier < Leader < MessagePassing < Independent")
 	}
 }
